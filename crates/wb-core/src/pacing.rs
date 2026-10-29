@@ -39,6 +39,11 @@ pub struct PacingWindow {
     pub phase_mean: f64,
     /// Pictures waiting to be shown.
     pub queue: usize,
+    /// Refreshes the display skipped (filled in by the engine from the scanout).
+    pub missed_vblanks: u64,
+    /// Arrival time after the vblank, p50 / p90 in ms (filled in by the engine).
+    pub arrival_ms_p50: f64,
+    pub arrival_ms_p90: f64,
 }
 
 pub struct Pacer {
@@ -130,7 +135,8 @@ impl Pacer {
         self.phase_s = (1.0 - PHASE_ALPHA) * self.phase_s + PHASE_ALPHA * ang.sin();
         let mean = self.phase_mean();
         // Distance of this arrival from the mean, wrapped to [-0.5, 0.5).
-        let d = ((frac - mean + 1.5).rem_euclid(1.0)) - 0.5;
+        let d = (frac - mean).rem_euclid(1.0);
+        let d = if d >= 0.5 { d - 1.0 } else { d };
         // The interval the mean arrival falls in; this arrival belongs to it when close.
         let m = frac - d;
         let belongs = if m < 0.0 {
@@ -170,10 +176,10 @@ impl Pacer {
     }
 
     fn close_run(&mut self) {
-        if self.run > 0 {
-            let i = (self.run.min(RUN_BUCKETS as u64) - 1) as usize;
-            self.win.runs[i] += 1;
-        }
+        // `run` counts the vblanks the previous picture stayed; it is >= 1 here because
+        // nothing can be due at the very first vblank (show delay is 2).
+        let i = (self.run.clamp(1, RUN_BUCKETS as u64) - 1) as usize;
+        self.win.runs[i] += 1;
         self.run = 0;
     }
 }
