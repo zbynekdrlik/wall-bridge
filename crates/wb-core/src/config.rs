@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub api: ApiCfg,
@@ -41,17 +41,6 @@ pub struct PacingCfg {
     pub guard_us: u64,
     /// Ring of picture copies.
     pub ring: usize,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            api: ApiCfg::default(),
-            sender: SenderCfg::default(),
-            wall: WallCfg::default(),
-            pacing: PacingCfg::default(),
-        }
-    }
 }
 
 impl Default for ApiCfg {
