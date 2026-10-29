@@ -38,7 +38,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
-name = "wall-bridge-mvp"
+name = "wb-core"
+version = "0.2.0"
+
+[[package]]
+name = "wb-mvp"
 version = "0.2.0"
 dependencies = [
  "windows",

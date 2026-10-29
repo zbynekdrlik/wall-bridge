@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pure crates build and test on Linux; Windows-only crates are checked in the windows job.
+  PURE_CRATES: -p wb-core
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --all --check
+
+  clippy-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy $PURE_CRATES --all-targets -- -D warnings
+
+  test-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test $PURE_CRATES
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-llvm-cov }
+      - name: Line coverage vs floor
+        run: cargo llvm-cov $PURE_CRATES --fail-under-lines "$(cat .github/coverage-floor)"
+
+  mutants:
+    needs: [test-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with: { tool: "cargo-mutants,cargo-nextest" }
+      - name: Diff-scoped mutation gate (pure crates)
+        run: |
+          git diff origin/main...HEAD -- crates/wb-core > pr.diff
+          if [ ! -s pr.diff ]; then echo "no wb-core changes vs main"; exit 0; fi
+          cargo mutants $PURE_CRATES --in-diff pr.diff --baseline=skip --test-tool=nextest --jobs 2 -- --all-targets
+
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: dev version > main version
+        if: github.ref != 'refs/heads/main'
+        run: python3 scripts/check_version.py --base-ref origin/main
+
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release --workspace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wall-bridge-windows
+          path: target/release/*.exe
+
+  all-pass:
+    if: always()
+    needs: [fmt, clippy-linux, test-linux, coverage, mutants, version, windows-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job green
+        run: |
+          echo '${{ toJSON(needs) }}' | python3 -c "import json,sys; n=json.load(sys.stdin); bad=[k for k,v in n.items() if v['result']!='success']; print('failed:',bad); sys.exit(1 if bad else 0)"

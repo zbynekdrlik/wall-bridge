@@ -12,7 +12,9 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
 
 ## Build
 - Rust, `windows` 0.58, cross-compiled on dev1 for `x86_64-pc-windows-gnu`. The target and mingw are provided system-wide; do not install toolchains in the account.
-- `cargo build --release --target x86_64-pc-windows-gnu`
+- Workspace: pure logic in `crates/wb-core` (tested on Linux: `cargo test -p wb-core`), Windows crates beside it.
+- `cargo build --release --target x86_64-pc-windows-gnu --workspace`
+- Plan: `docs/superpowers/plans/2026-10-29-wall-bridge-production.md`, ticket #2.
 
 ## Deploy / test
 - Through the `win-resolume` MCP (remoteos gateway).
