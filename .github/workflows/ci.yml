@@ -93,11 +93,65 @@ jobs:
           name: wall-bridge-windows
           path: target/release/*.exe
 
+  installer-tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pester (Windows PowerShell 5.1, as on SNV)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module Pester -MinimumVersion 5.0
+          $r = Invoke-Pester -Path installer/tests -PassThru -Output Detailed
+          if ($r.FailedCount -gt 0 -or $r.PassedCount -eq 0) { exit 1 }
+
   all-pass:
     if: always()
-    needs: [fmt, clippy-linux, test-linux, coverage, mutants, version, windows-build]
+    needs: [fmt, clippy-linux, test-linux, coverage, mutants, version, windows-build, installer-tests]
     runs-on: ubuntu-latest
     steps:
       - name: Every job green
         run: |
           echo '${{ toJSON(needs) }}' | python3 -c "import json,sys; n=json.load(sys.stdin); bad=[k for k,v in n.items() if v['result']!='success']; print('failed:',bad); sys.exit(1 if bad else 0)"
+
+  release:
+    needs: [all-pass]
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p wb-service
+      - name: Bundle (wall-bridge.exe + installer + VERSION + SHA256SUMS)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = (& target/release/wall-bridge.exe --version).Trim()
+          "VERSION=$v" >> $env:GITHUB_ENV
+          $d = "dist/wall-bridge-$v"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item target/release/wall-bridge.exe $d
+          Copy-Item installer/install.ps1, installer/WallBridge.Install.psm1 $d
+          Set-Content "$d/VERSION" $v -NoNewline
+          Compress-Archive -Path "$d/*" -DestinationPath "dist/wall-bridge-$v.zip"
+          $h = (Get-FileHash "dist/wall-bridge-$v.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content dist/SHA256SUMS "$h  wall-bridge-$v.zip"
+      - name: Publish dev-latest (dev) or v<version> (main)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = @("dist/wall-bridge-$env:VERSION.zip", 'dist/SHA256SUMS')
+          if ('${{ github.ref }}' -eq 'refs/heads/main') {
+            gh release create "v$env:VERSION" @assets --target '${{ github.sha }}' --title "wall-bridge $env:VERSION" --notes "Stable release $env:VERSION"
+          } else {
+            gh release delete dev-latest --cleanup-tag --yes 2>$null
+            $global:LASTEXITCODE = 0
+            gh release create dev-latest @assets --target '${{ github.sha }}' --prerelease --title "wall-bridge $env:VERSION (dev)" --notes "Dev build ${{ github.sha }}"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
