@@ -152,3 +152,37 @@ fn config_overrides_and_rejects_unknown_keys() {
     assert_eq!(c.sender.name, "Test");
     assert!(Config::from_toml("[api]\nprot = 1\n").is_err());
 }
+
+fn temp_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("wb-config-{tag}-{}", std::process::id()))
+}
+
+#[test]
+fn config_load_missing_file_gives_defaults() {
+    let c = Config::load(&temp_path("missing")).unwrap();
+    assert_eq!(c, Config::default());
+}
+
+#[test]
+fn config_load_reads_the_file() {
+    let p = temp_path("read");
+    std::fs::write(&p, "[api]\nport = 9100\n").unwrap();
+    let c = Config::load(&p);
+    std::fs::remove_file(&p).unwrap();
+    assert_eq!(c.unwrap().api.port, 9100);
+}
+
+#[test]
+fn config_load_reports_bad_toml_and_unreadable_paths() {
+    let p = temp_path("bad");
+    std::fs::write(&p, "[api]\nport = \"x\"\n").unwrap();
+    let bad = Config::load(&p);
+    std::fs::remove_file(&p).unwrap();
+    assert!(bad.unwrap_err().contains("wb-config-bad"));
+    // A directory is not a missing file: it must not silently become defaults.
+    let d = temp_path("dir");
+    std::fs::create_dir_all(&d).unwrap();
+    let dir = Config::load(&d);
+    std::fs::remove_dir(&d).unwrap();
+    assert!(dir.is_err());
+}

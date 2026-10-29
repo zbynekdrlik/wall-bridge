@@ -3,4 +3,5 @@ pub mod config;
 pub mod health;
 pub mod pacing;
 pub mod sender;
+pub mod spout_wire;
 pub mod status;
