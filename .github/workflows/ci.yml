@@ -13,7 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Pure crates build and test on Linux; Windows-only crates are checked in the windows job.
-  PURE_CRATES: -p wb-core -p wb-service
+  PURE_CRATES: -p wb-core -p wb-service -p wb-tray
   # Coverage floor applies to the pure logic crate; wb-service is mostly Windows glue.
   COVERAGE_CRATES: -p wb-core
 
@@ -125,7 +125,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p wb-service
+      - run: cargo build --release -p wb-service -p wb-tray
       - name: Bundle (wall-bridge.exe + installer + VERSION + SHA256SUMS)
         shell: pwsh
         run: |
@@ -134,7 +134,7 @@ jobs:
           "VERSION=$v" >> $env:GITHUB_ENV
           $d = "dist/wall-bridge-$v"
           New-Item -ItemType Directory -Force $d | Out-Null
-          Copy-Item target/release/wall-bridge.exe $d
+          Copy-Item target/release/wall-bridge.exe, target/release/wall-bridge-tray.exe $d
           Copy-Item installer/install.ps1, installer/WallBridge.Install.psm1 $d
           Set-Content "$d/VERSION" $v -NoNewline
           Compress-Archive -Path "$d/*" -DestinationPath "dist/wall-bridge-$v.zip"

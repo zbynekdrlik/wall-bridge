@@ -25,9 +25,15 @@ $dir = Install-AppFiles -Source $Source -Root $Root -Version $version
 $exe = Join-Path $dir 'wall-bridge.exe'
 Register-EngineTask -Exe $exe -User $User
 Register-WatchdogTask -Root $Root
+$tray = Join-Path $dir 'wall-bridge-tray.exe'
+if (Test-Path $tray) { Register-TrayTask -Exe $tray -User $User }
 Write-InstallLog $Root "tasks registered for $exe (user $User)"
 
 if (-not $NoStart) {
     Start-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine'
     Write-InstallLog $Root 'engine task started'
+    if (Test-Path $tray) {
+        Start-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Tray'
+        Write-InstallLog $Root 'tray task started'
+    }
 }

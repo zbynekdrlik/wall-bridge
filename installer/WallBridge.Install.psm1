@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:EngineTask = 'WallBridge Engine'
 $script:WatchdogTask = 'WallBridge Watchdog'
+$script:TrayTask = 'WallBridge Tray'
 $script:TaskPath = '\WallBridge\'
 
 function Write-InstallLog([string]$Root, [string]$Message) {
@@ -91,13 +92,25 @@ if (-not (Get-Process -Name 'wall-bridge' -ErrorAction SilentlyContinue)) {
         -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 }
 
+# The tray icon starts at the desktop user's logon (airuleset rust-web-tray). No restart
+# policy: Exit in its menu is a deliberate choice.
+function Register-TrayTask([string]$Exe, [string]$User) {
+    $action = New-ScheduledTaskAction -Execute $Exe -WorkingDirectory (Split-Path $Exe)
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
+    $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $script:TrayTask -TaskPath $script:TaskPath -Action $action `
+        -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+}
+
 function Stop-Engines([string]$Root) {
     Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
-    foreach ($p in Get-Process -Name 'wall-bridge', 'wb2' -ErrorAction SilentlyContinue) {
+    foreach ($p in Get-Process -Name 'wall-bridge', 'wall-bridge-tray', 'wb2' -ErrorAction SilentlyContinue) {
         Write-InstallLog $Root "stopping $($p.ProcessName) pid $($p.Id)"
         Stop-Process -Id $p.Id -Force
     }
 }
 
 Export-ModuleMember -Function Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
-    Register-EngineTask, Register-WatchdogTask, Stop-Engines, Write-InstallLog
+    Register-EngineTask, Register-WatchdogTask, Register-TrayTask, Stop-Engines, Write-InstallLog

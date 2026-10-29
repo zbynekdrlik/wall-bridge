@@ -46,6 +46,14 @@ Describe 'Register-EngineTask' {
     AfterAll {
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine' -Confirm:$false -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Watchdog' -Confirm:$false -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Tray' -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    It 'tray starts at logon, no restart policy' {
+        Register-TrayTask -Exe 'C:\Windows\System32\cmd.exe' -User $env:USERNAME
+        $t = Get-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Tray'
+        $t.Triggers[0].CimClass.CimClassName | Should -Be 'MSFT_TaskLogonTrigger'
+        $t.Principal.LogonType | Should -Be 'Interactive'
+        $t.Settings.RestartCount | Should -Be 0
     }
     It 'task_registered_with_restart' {
         Register-EngineTask -Exe 'C:\Windows\System32\cmd.exe' -User $env:USERNAME
