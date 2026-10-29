@@ -93,6 +93,26 @@ jobs:
           name: wall-bridge-windows
           path: target/release/*.exe
 
+  dashboard-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: cargo build -p wb-service --example dashboard_fixture
+      - name: Playwright (real browser on the real dashboard, fixed status)
+        working-directory: e2e
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          ../target/debug/examples/dashboard_fixture 18930 ok &
+          ../target/debug/examples/dashboard_fixture 18931 degraded &
+          sleep 2
+          npx playwright test
+          WB_URL=http://127.0.0.1:18931 WB_EXPECT_STATE="Stena beží, ale niečo nesedí — sender_lost" npx playwright test
+
   installer-tests:
     runs-on: windows-latest
     timeout-minutes: 15
@@ -108,7 +128,7 @@ jobs:
 
   all-pass:
     if: always()
-    needs: [fmt, clippy-linux, test-linux, coverage, mutants, version, windows-build, installer-tests]
+    needs: [fmt, clippy-linux, test-linux, coverage, mutants, version, windows-build, installer-tests, dashboard-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Every job green
