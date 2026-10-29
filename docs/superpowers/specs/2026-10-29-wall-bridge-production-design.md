@@ -1,6 +1,6 @@
 # wall-bridge — production design
 
-Ticket: #2. Status: draft, waiting for owner approval.
+Ticket: #2. Status: approved by the owner 29.10.2026 (#2).
 
 ## Intent
 
@@ -52,7 +52,7 @@ Owner's fear: a repeat of 4 weeks of detours. The working recipe is the bridge +
   - 0x80061081 = NZXT Signal HD60 grabber passthrough (measurement path, stays on the desktop).
 - **Access:** only through the `win-resolume` MCP. Never ssh. A self-hosted GitHub Actions runner already exists on the PC (scheduled task `GitHubActionsRunner`).
 - **Display.Core `CreateScanoutSource` on the Surround span:** works on 25H2, failed on 23H2.
-- **Session:** the MVP runs in the interactive session 1 (user `Resolume`). It is unproven from session 0 (SYSTEM service). `AutoAdminLogon` = 0; Arena itself needs a logged-in session.
+- **Session:** the MVP runs in the interactive session 1 (user `Resolume`). It is unproven from session 0 (SYSTEM service). `Resolume` logs on automatically since the first install (owner, 29.10.). The registry value `AutoAdminLogon` reads 0, so the auto-logon works through another mechanism; do not "fix" it. Arena itself needs the logged-in session.
 - **Surround collapse:** any topology change (monitor plugged in, resolution test, driver install) turns the wall into one 3840×2160@29/30 display 0x80061088.
   - Re-forming works ONLY from the "3 separate displays" state, never from a collapsed span.
   - Proven script: `diag\wall-bridge\nvapi_grid_reform_keep.py` (pinned 1×3 blob `cycle-20261013-111323.log.pinned.bin` + 1×1 grid for 0x80061081).
@@ -193,7 +193,7 @@ airuleset `rust-web-tray`: Status (tooltip + menu), Open wall-bridge (dashboard 
 
 ## Calls made after the builder check (mine, owner can override)
 
-- **Reboot scope.** wall-bridge recovers on its own as soon as a session of `Resolume` exists and Arena sends Spout. Starting Arena is not wall-bridge's job: SongPlayer's `SP-ArenaLaunch` task and the operator own it. Auto-logon is an OS decision for the owner, see "Open with the owner".
+- **Reboot scope.** `Resolume` logs on automatically. wall-bridge recovers on its own as soon as that session exists and Arena sends Spout. Starting Arena is not wall-bridge's job: SongPlayer's `SP-ArenaLaunch` task and the operator own it.
 - **Event mode.** No event signal is read. A collapsed or drifted wall is already broken, so the keeper restores right away. The keeper never touches a topology that matches the definition.
 - **Upgrade gate.** The updater installs only in a night window, 03:00–05:00 local, by default. Outside the window it only downloads. The kill-switch file still applies.
 - **Release channel.** SNV follows stable (`main`) through the updater. Dev builds reach SNV only through the CI E2E job on the self-hosted runner, which installs over the production install. A short blink outside events is fine per the owner. The updater never downgrades: a dev build sits there until a stable release has a higher version.
@@ -212,7 +212,8 @@ airuleset `rust-web-tray`: Status (tooltip + menu), Open wall-bridge (dashboard 
 - Quiet-window rule details for upgrades.
 - Port choice, if 8930 is taken.
 
-## Open with the owner
+## Owner decisions (29.10.2026)
 
-- Drop the `LG wall` display output from Arena preset `snv surround 7680` (asked on #2).
-- Turn on auto-logon for `Resolume` (today `AutoAdminLogon` = 0), so that a reboot needs no human. Without it, the wall comes back after someone logs on.
+- Design approved.
+- Drop `LG wall` from Arena preset `snv surround 7680`: yes. Done 29.10. 23:3x by editing the preset file (backup `C:\ProgramData\WallBridge\backup\arena-20261029\`). Arena reads the preset at start, so the change is live from the next Arena start. The A/B/A stall test runs after that start.
+- Auto-logon of `Resolume` is already active since the first install. Nothing to change.
