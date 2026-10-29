@@ -84,8 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      # wb-mvp is the seed MVP, deleted once wb-service replaces it (plan Task 6).
-      - run: cargo clippy --workspace --exclude wb-mvp --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo build --release --workspace
       - uses: actions/upload-artifact@v4
