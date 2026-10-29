@@ -266,3 +266,13 @@ fn live_specialized_span_matches_without_its_grid() {
     ));
     assert!(!h.unknown);
 }
+
+#[test]
+fn failure_window_is_exactly_30_minutes() {
+    use wb_core::topology::FAIL_WINDOW_MS;
+    let mut h = KeeperHistory::default();
+    h.restore_finished(1_000, false);
+    assert_eq!(h.failures(1_000), 1);
+    assert_eq!(h.failures(1_000 + FAIL_WINDOW_MS - 1), 1);
+    assert_eq!(h.failures(1_000 + FAIL_WINDOW_MS), 0);
+}
