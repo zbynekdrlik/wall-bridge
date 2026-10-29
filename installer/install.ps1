@@ -27,6 +27,7 @@ Register-EngineTask -Exe $exe -User $User
 Register-WatchdogTask -Root $Root
 $tray = Join-Path $dir 'wall-bridge-tray.exe'
 if (Test-Path $tray) { Register-TrayTask -Exe $tray -User $User }
+if (Test-Path (Join-Path $dir 'autoupdate.ps1')) { Register-UpdateTask -AppDir $dir -Root $Root -User $User }
 Write-InstallLog $Root "tasks registered for $exe (user $User)"
 
 if (-not $NoStart) {

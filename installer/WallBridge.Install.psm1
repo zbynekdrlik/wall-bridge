@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 $script:EngineTask = 'WallBridge Engine'
 $script:WatchdogTask = 'WallBridge Watchdog'
 $script:TrayTask = 'WallBridge Tray'
+$script:UpdateTask = 'WallBridge Update'
 $script:TaskPath = '\WallBridge\'
 
 function Write-InstallLog([string]$Root, [string]$Message) {
@@ -104,6 +105,20 @@ function Register-TrayTask([string]$Exe, [string]$User) {
         -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 }
 
+# Autoupgrade: SYSTEM, at startup and every hour (installs only 03:00-05:00, see autoupdate.ps1).
+function Register-UpdateTask([string]$AppDir, [string]$Root, [string]$User) {
+    $script = Join-Path $AppDir 'autoupdate.ps1'
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$script`" -Root `"$Root`" -User `"$User`""
+    $hourly = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 1)
+    $boot = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $script:UpdateTask -TaskPath $script:TaskPath -Action $action `
+        -Trigger @($hourly, $boot) -Principal $principal -Settings $settings -Force | Out-Null
+}
+
 function Stop-Engines([string]$Root) {
     Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
     foreach ($p in Get-Process -Name 'wall-bridge', 'wall-bridge-tray', 'wb2' -ErrorAction SilentlyContinue) {
@@ -113,4 +128,5 @@ function Stop-Engines([string]$Root) {
 }
 
 Export-ModuleMember -Function Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
-    Register-EngineTask, Register-WatchdogTask, Register-TrayTask, Stop-Engines, Write-InstallLog
+    Register-EngineTask, Register-WatchdogTask, Register-TrayTask, Register-UpdateTask, Stop-Engines, `
+    Write-InstallLog

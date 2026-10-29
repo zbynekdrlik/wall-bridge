@@ -47,6 +47,16 @@ Describe 'Register-EngineTask' {
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine' -Confirm:$false -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Watchdog' -Confirm:$false -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Tray' -Confirm:$false -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Update' -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    It 'update task runs hourly and at startup as SYSTEM' {
+        Register-UpdateTask -AppDir 'C:\x\app\0.2.0' -Root 'C:\x' -User $env:USERNAME
+        $t = Get-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Update'
+        $t.Principal.UserId | Should -Be 'SYSTEM'
+        @($t.Triggers).Count | Should -Be 2
+        ($t.Triggers | ForEach-Object { $_.CimClass.CimClassName }) | Should -Contain 'MSFT_TaskBootTrigger'
+        $t.Triggers[0].Repetition.Interval | Should -Be 'PT1H'
+        $t.Actions[0].Arguments | Should -Match 'autoupdate.ps1'
     }
     It 'tray starts at logon, no restart policy' {
         Register-TrayTask -Exe 'C:\Windows\System32\cmd.exe' -User $env:USERNAME
