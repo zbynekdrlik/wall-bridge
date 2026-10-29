@@ -2162,13 +2162,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wb-mvp"
-version = "0.2.0"
-dependencies = [
- "windows",
-]
-
-[[package]]
 name = "wb-scanout"
 version = "0.2.0"
 dependencies = [
