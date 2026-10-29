@@ -20,6 +20,13 @@ fn main() {
                 println!("{}", env!("CARGO_PKG_VERSION"));
                 return;
             }
+            // Diagnostics for tests on the real PC: print the Mosaic grids, or dissolve the
+            // wall into separate displays (what the keeper's first restore step does).
+            "--topology" => {
+                let what = args.next().unwrap_or_default();
+                let cfg = Config::load(&config_path).unwrap_or_default();
+                std::process::exit(topology_cli(&what, &cfg));
+            }
             other => {
                 eprintln!("unknown argument {other}");
                 std::process::exit(2);
@@ -66,17 +73,28 @@ fn main() {
             height: 0,
             hz: 0.0,
         },
-        // The topology keeper comes with plan task C8; until then the layout is not checked.
+        // Unknown until the keeper's first read (a few ms after start).
         topology: TopologyState {
-            matches: true,
+            matches: false,
             last_restore_ms: None,
             failures: 0,
             gave_up: false,
         },
         sender: wb_core::sender::SenderWatch::new(&cfg.sender.name).state(0),
         pacing: Default::default(),
-        warnings: vec!["Surround keeper not active yet (plan C8)".into()],
+        warnings: vec![],
     }));
+
+    if cfg.topology.enabled {
+        let (kcfg, kstatus) = (cfg.clone(), status.clone());
+        std::thread::Builder::new()
+            .name("keeper".into())
+            .spawn(move || wb_service::keeper::run(kcfg, kstatus))
+            .expect("keeper thread");
+    } else {
+        info!("surround keeper disabled in config");
+        status.write().expect("status lock").topology.matches = true;
+    }
 
     let api_status = status.clone();
     let port = cfg.api.port;
@@ -106,6 +124,69 @@ fn main() {
     if let Err(e) = wb_service::engine::run(cfg, status) {
         error!(err = ?e, "engine failed to start");
         std::process::exit(1);
+    }
+}
+
+#[cfg(windows)]
+fn topology_cli(what: &str, cfg: &wb_core::config::Config) -> i32 {
+    use wb_topology::{Nvapi, RawGrid, PINNED};
+    let nv = match Nvapi::load() {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let read = match nv.read_raw() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let grids: Vec<_> = read.iter().map(RawGrid::to_grid).collect();
+    println!("driver {:?}", nv.driver_version());
+    for g in &grids {
+        println!(
+            "grid {}x{} {}x{}@{} ids {:x?}",
+            g.rows, g.cols, g.width, g.height, g.freq, g.ids
+        );
+    }
+    let def = cfg.topology.wall_def();
+    println!("matches definition: {}", def.matches(&grids));
+    match what {
+        "read" => 0,
+        "separate" => {
+            let pinned = RawGrid::from_bytes(PINNED).expect("pinned grid");
+            let want = def.separate_grids(&grids);
+            let raw: Vec<RawGrid> = want
+                .iter()
+                .map(|g| {
+                    read.iter()
+                        .find(|r| {
+                            g.ids.len() == 1
+                                && def.keep_single.contains(&g.ids[0])
+                                && r.to_grid() == *g
+                        })
+                        .copied()
+                        .unwrap_or_else(|| RawGrid::from_grid(g, &pinned))
+                })
+                .collect();
+            match nv.set_raw(&raw) {
+                Ok(()) => {
+                    println!("separated into {} grids", raw.len());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        other => {
+            eprintln!("--topology read|separate, got '{other}'");
+            2
+        }
     }
 }
 

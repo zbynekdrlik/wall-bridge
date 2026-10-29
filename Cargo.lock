@@ -2191,6 +2191,7 @@ dependencies = [
  "wb-core",
  "wb-scanout",
  "wb-spout",
+ "wb-topology",
  "windows",
 ]
 
@@ -2198,6 +2199,15 @@ dependencies = [
 name = "wb-spout"
 version = "0.2.0"
 dependencies = [
+ "wb-core",
+ "windows",
+]
+
+[[package]]
+name = "wb-topology"
+version = "0.2.0"
+dependencies = [
+ "tracing",
  "wb-core",
  "windows",
 ]

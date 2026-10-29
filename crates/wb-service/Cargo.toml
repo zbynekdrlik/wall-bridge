@@ -19,6 +19,7 @@ tracing-appender = "0.2"
 [target.'cfg(windows)'.dependencies]
 wb-spout = { path = "../wb-spout" }
 wb-scanout = { path = "../wb-scanout" }
+wb-topology = { path = "../wb-topology" }
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Graphics_Direct3D",

@@ -13,7 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Pure crates build and test on Linux; Windows-only crates are checked in the windows job.
-  PURE_CRATES: -p wb-core -p wb-service -p wb-tray
+  PURE_CRATES: -p wb-core -p wb-service -p wb-tray -p wb-topology
   # Coverage floor applies to the pure logic crate; wb-service is mostly Windows glue.
   COVERAGE_CRATES: -p wb-core
 
@@ -156,6 +156,7 @@ jobs:
           New-Item -ItemType Directory -Force $d | Out-Null
           Copy-Item target/release/wall-bridge.exe, target/release/wall-bridge-tray.exe $d
           Copy-Item installer/install.ps1, installer/WallBridge.Install.psm1, installer/autoupdate.ps1, installer/WallBridge.Update.psm1 $d
+          Copy-Item installer/tools "$d/tools" -Recurse
           Set-Content "$d/VERSION" $v -NoNewline
           Compress-Archive -Path "$d/*" -DestinationPath "dist/wall-bridge-$v.zip"
           $h = (Get-FileHash "dist/wall-bridge-$v.zip" -Algorithm SHA256).Hash.ToLower()

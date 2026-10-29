@@ -7,3 +7,5 @@ pub mod logging;
 pub mod engine;
 #[cfg(windows)]
 pub mod instance;
+#[cfg(windows)]
+pub mod keeper;

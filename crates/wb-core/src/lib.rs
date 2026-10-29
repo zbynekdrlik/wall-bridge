@@ -5,4 +5,5 @@ pub mod pacing;
 pub mod sender;
 pub mod spout_wire;
 pub mod status;
+pub mod topology;
 pub mod vblank;
