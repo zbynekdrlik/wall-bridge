@@ -186,3 +186,20 @@ fn config_load_reports_bad_toml_and_unreadable_paths() {
     std::fs::remove_dir(&d).unwrap();
     assert!(dir.is_err());
 }
+
+#[test]
+fn specialized_from_target_list() {
+    use wb_core::status::specialized_from_targets;
+    let t = vec![
+        " usage=0 connected=false".to_string(),
+        "CEN93200_1E_07E4_EC usage=0 connected=true".to_string(),
+        "GSM779465795_0F_07DD_BC usage=2 connected=true".to_string(),
+    ];
+    assert!(specialized_from_targets(&t, "GSM779465795"));
+    assert!(!specialized_from_targets(&t, "CEN93200"));
+    assert!(!specialized_from_targets(&t, "NOPE"));
+    let on_desktop = vec!["GSM779465795_0F_07DD_BC usage=1 connected=true".to_string()];
+    assert!(!specialized_from_targets(&on_desktop, "GSM779465795"));
+    let disconnected = vec!["GSM779465795_0F_07DD_BC usage=2 connected=false".to_string()];
+    assert!(!specialized_from_targets(&disconnected, "GSM779465795"));
+}

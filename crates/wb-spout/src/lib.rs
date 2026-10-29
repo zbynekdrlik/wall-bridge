@@ -9,11 +9,9 @@ use windows::core::{Error, Result, PCSTR, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, E_FAIL, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
+use windows::Win32::Graphics::Dxgi::DXGI_ERROR_WAS_STILL_DRAWING;
 use windows::Win32::System::Memory::*;
 use windows::Win32::System::Threading::*;
-
-/// Wait for Arena's access mutex at most this long per probe.
-const LOCK_WAIT_MS: u32 = 2;
 
 /// Reads a whole named file mapping of `len` bytes (0 = the whole mapping).
 fn read_mapping(name: &str, len: usize) -> Option<Vec<u8>> {
@@ -61,6 +59,8 @@ pub fn read_info(name: &str) -> Option<TextureInfo> {
 pub enum Probe {
     /// Arena held the mutex longer than the probe may wait.
     LockTimeout,
+    /// The GPU has not finished sampling the probe boxes yet; ask again shortly.
+    Busy,
     /// Same picture as last time.
     Same,
     /// A new picture was copied into the destination.
@@ -81,6 +81,8 @@ pub struct Reader {
     stage: ID3D11Texture2D,
     open: Option<Open>,
     prev_sig: Vec<u8>,
+    /// Probe boxes are queued on the GPU and not read back yet.
+    pending: bool,
 }
 
 impl Reader {
@@ -108,6 +110,7 @@ impl Reader {
             stage: stage.ok_or_else(|| Error::from(E_FAIL))?,
             open: None,
             prev_sig: vec![],
+            pending: false,
         })
     }
 
@@ -157,6 +160,7 @@ impl Reader {
             mutex,
         });
         self.prev_sig.clear();
+        self.pending = false;
         Ok(())
     }
 
@@ -180,24 +184,40 @@ impl Reader {
         self.open.as_ref().map(|o| (o.width, o.height))
     }
 
-    /// Probes the sender once. On a new picture, `dst()` names the texture to copy it into
-    /// (the copy happens while Arena's mutex is held); a picture larger than `dst` is
-    /// cropped top-left, as in the MVP.
+    /// Probes the sender once and never blocks on the GPU: it queues the probe-box copy,
+    /// and reads it back only when the GPU is done (`Busy` until then). Waits for Arena's
+    /// mutex at most `max_wait_ms`. On a new picture, `dst()` names the texture to copy it
+    /// into (while Arena's mutex is held); a picture larger than `dst` is cropped top-left.
     pub fn poll(
         &mut self,
         ctx: &ID3D11DeviceContext,
+        max_wait_ms: u32,
         dst: impl FnOnce() -> ID3D11Texture2D,
     ) -> Result<Probe> {
         let Some(o) = &self.open else {
             return Ok(Probe::Same);
         };
-        if let Some(m) = o.mutex {
-            let r = unsafe { WaitForSingleObject(m, LOCK_WAIT_MS) };
-            if r != WAIT_OBJECT_0 && r != WAIT_ABANDONED {
+        let lock = |m: Option<HANDLE>| -> bool {
+            match m {
+                Some(m) => {
+                    let r = unsafe { WaitForSingleObject(m, max_wait_ms) };
+                    r == WAIT_OBJECT_0 || r == WAIT_ABANDONED
+                }
+                None => true,
+            }
+        };
+        let unlock = |m: Option<HANDLE>| {
+            if let Some(m) = m {
+                unsafe {
+                    let _ = ReleaseMutex(m);
+                }
+            }
+        };
+
+        if !self.pending {
+            if !lock(o.mutex) {
                 return Ok(Probe::LockTimeout);
             }
-        }
-        let result = (|| unsafe {
             for (k, (x, y)) in spout_wire::sample_boxes(o.width, o.height)
                 .into_iter()
                 .enumerate()
@@ -210,21 +230,61 @@ impl Reader {
                     bottom: (y + 8).min(o.height),
                     back: 1,
                 };
-                ctx.CopySubresourceRegion(&self.stage, 0, k as u32 * 8, 0, 0, &o.tex, 0, Some(&b));
+                unsafe {
+                    ctx.CopySubresourceRegion(
+                        &self.stage,
+                        0,
+                        k as u32 * 8,
+                        0,
+                        0,
+                        &o.tex,
+                        0,
+                        Some(&b),
+                    )
+                };
             }
-            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            ctx.Map(&self.stage, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-            let row = (8 * SAMPLES * 4) as usize;
-            let mut sig = Vec::with_capacity(row * 8);
-            for r in 0..8 {
+            unsafe { ctx.Flush() };
+            unlock(o.mutex);
+            self.pending = true;
+        }
+
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        match unsafe {
+            ctx.Map(
+                &self.stage,
+                0,
+                D3D11_MAP_READ,
+                D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32,
+                Some(&mut mapped),
+            )
+        } {
+            Ok(()) => {}
+            Err(e) if e.code() == DXGI_ERROR_WAS_STILL_DRAWING => return Ok(Probe::Busy),
+            Err(e) => {
+                self.pending = false;
+                return Err(e);
+            }
+        }
+        let row = (8 * SAMPLES * 4) as usize;
+        let mut sig = Vec::with_capacity(row * 8);
+        for r in 0..8 {
+            unsafe {
                 let p = (mapped.pData as *const u8).add(r * mapped.RowPitch as usize);
                 sig.extend_from_slice(std::slice::from_raw_parts(p, row));
             }
-            ctx.Unmap(&self.stage, 0);
-            if sig == self.prev_sig {
-                return Ok(Probe::Same);
-            }
-            let dst = dst();
+        }
+        unsafe { ctx.Unmap(&self.stage, 0) };
+        self.pending = false;
+        if sig == self.prev_sig {
+            return Ok(Probe::Same);
+        }
+
+        if !lock(o.mutex) {
+            // prev_sig stays: the next probe sees the change again.
+            return Ok(Probe::LockTimeout);
+        }
+        let dst = dst();
+        unsafe {
             let mut dd = D3D11_TEXTURE2D_DESC::default();
             dst.GetDesc(&mut dd);
             if dd.Width == o.width && dd.Height == o.height {
@@ -241,15 +301,10 @@ impl Reader {
                 ctx.CopySubresourceRegion(&dst, 0, 0, 0, 0, &o.tex, 0, Some(&b));
             }
             ctx.Flush();
-            self.prev_sig = sig;
-            Ok(Probe::New)
-        })();
-        if let Some(m) = o.mutex {
-            unsafe {
-                let _ = ReleaseMutex(m);
-            }
         }
-        result
+        unlock(o.mutex);
+        self.prev_sig = sig;
+        Ok(Probe::New)
     }
 }
 

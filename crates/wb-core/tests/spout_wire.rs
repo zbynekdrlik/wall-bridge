@@ -63,6 +63,7 @@ fn sample_boxes_spread_inside_the_frame() {
     let boxes = sample_boxes(7680, 1080);
     assert_eq!(boxes.len(), SAMPLES as usize);
     assert_eq!(boxes[0], (240, 135)); // MVP: x = (2k+1) w / 32, y = ((k % 4) * 2 + 1) h / 8
+    assert_eq!(boxes[4], (2160, 135)); // the y pattern repeats every 4 boxes
     assert_eq!(boxes[5], (2640, 405));
     assert_eq!(boxes[15], (7440, 945));
     for &(x, y) in &boxes {

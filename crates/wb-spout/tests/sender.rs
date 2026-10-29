@@ -128,6 +128,17 @@ fn sender(dev: &ID3D11Device, name: &str, w: u32, h: u32) -> TestSender {
     }
 }
 
+/// Polls until the probe is no longer `Busy` (the GPU finished the probe-box copy).
+fn poll(r: &mut Reader, ctx: &ID3D11DeviceContext, dst: &ID3D11Texture2D) -> Probe {
+    for _ in 0..10_000 {
+        match r.poll(ctx, 2, || dst.clone()).unwrap() {
+            Probe::Busy => std::thread::sleep(std::time::Duration::from_micros(100)),
+            p => return p,
+        }
+    }
+    panic!("probe stayed busy");
+}
+
 #[test]
 fn reads_new_and_same_pictures() {
     let (dev, ctx) = device();
@@ -140,10 +151,10 @@ fn reads_new_and_same_pictures() {
     r.open(seen.handle).unwrap();
     let dst = texture(&dev, 640, 360, false);
     fill(&ctx, &s.tex, 640, 360, 10);
-    assert_eq!(r.poll(&ctx, || dst.clone()).unwrap(), Probe::New);
-    assert_eq!(r.poll(&ctx, || dst.clone()).unwrap(), Probe::Same);
+    assert_eq!(poll(&mut r, &ctx, &dst), Probe::New);
+    assert_eq!(poll(&mut r, &ctx, &dst), Probe::Same);
     fill(&ctx, &s.tex, 640, 360, 200);
-    assert_eq!(r.poll(&ctx, || dst.clone()).unwrap(), Probe::New);
+    assert_eq!(poll(&mut r, &ctx, &dst), Probe::New);
 }
 
 #[test]
@@ -157,7 +168,7 @@ fn size_mismatch_reported() {
     assert_eq!(r.size(), Some((3840, 540)));
     let dst = texture(&dev, 7680, 1080, false);
     fill(&ctx, &s.tex, 3840, 540, 77);
-    assert_eq!(r.poll(&ctx, || dst.clone()).unwrap(), Probe::New);
+    assert_eq!(poll(&mut r, &ctx, &dst), Probe::New);
 }
 
 #[test]

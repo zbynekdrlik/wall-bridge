@@ -68,3 +68,14 @@ impl Serialize for Status {
         .serialize(s)
     }
 }
+
+/// True when the wall's target (`monitor` substring of its StableMonitorId) is connected and
+/// marked special-purpose (`usage=2`, "removed from desktop"). Lines come from
+/// `wb_scanout::list_targets`: `"<id> usage=<n> connected=<bool>"`.
+pub fn specialized_from_targets(targets: &[String], monitor: &str) -> bool {
+    targets.iter().any(|t| {
+        let mut parts = t.split_whitespace();
+        let id = parts.next().unwrap_or("");
+        id.contains(monitor) && t.contains(" usage=2 ") && t.ends_with(" connected=true")
+    })
+}

@@ -13,7 +13,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Pure crates build and test on Linux; Windows-only crates are checked in the windows job.
-  PURE_CRATES: -p wb-core
+  PURE_CRATES: -p wb-core -p wb-service
+  # Coverage floor applies to the pure logic crate; wb-service is mostly Windows glue.
+  COVERAGE_CRATES: -p wb-core
 
 jobs:
   fmt:
@@ -48,7 +50,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with: { tool: cargo-llvm-cov }
       - name: Line coverage vs floor
-        run: cargo llvm-cov $PURE_CRATES --fail-under-lines "$(cat .github/coverage-floor)"
+        run: cargo llvm-cov $COVERAGE_CRATES --fail-under-lines "$(cat .github/coverage-floor)"
 
   mutants:
     needs: [test-linux]
@@ -64,7 +66,7 @@ jobs:
         run: |
           git diff origin/main...HEAD -- crates/wb-core > pr.diff
           if [ ! -s pr.diff ]; then echo "no wb-core changes vs main"; exit 0; fi
-          cargo mutants $PURE_CRATES --in-diff pr.diff --baseline=skip --test-tool=nextest --jobs 2 -- --all-targets
+          cargo mutants $COVERAGE_CRATES --in-diff pr.diff --baseline=skip --test-tool=nextest --jobs 2 -- --all-targets
 
   version:
     runs-on: ubuntu-latest
