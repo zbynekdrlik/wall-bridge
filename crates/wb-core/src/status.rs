@@ -79,3 +79,25 @@ pub fn specialized_from_targets(targets: &[String], monitor: &str) -> bool {
         id.contains(monitor) && t.contains(" usage=2 ") && t.ends_with(" connected=true")
     })
 }
+
+/// The wall's target is connected (on the desktop or not).
+pub fn wall_target_present(targets: &[String], monitor: &str) -> bool {
+    targets.iter().any(|t| {
+        let id = t.split_whitespace().next().unwrap_or("");
+        id.contains(monitor) && t.ends_with(" connected=true")
+    })
+}
+
+/// A connected Surround target (`NVS…`) while the wall's own target is absent: the span was
+/// formed from generic EDIDs (TVs off), it is not the wall.
+pub fn foreign_span(targets: &[String], monitor: &str) -> Option<String> {
+    if wall_target_present(targets, monitor) {
+        return None;
+    }
+    targets
+        .iter()
+        .filter(|t| t.ends_with(" connected=true"))
+        .filter_map(|t| t.split_whitespace().next())
+        .find(|id| id.starts_with("NVS"))
+        .map(str::to_string)
+}

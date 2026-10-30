@@ -357,3 +357,53 @@ fn wall_back_on_desktop_under_the_engine_is_respecialized() {
 fn span_live_for_test(specialized: bool) -> bool {
     wb_core::topology::span_live(true, specialized, (7680, 1080), (7680, 1080))
 }
+
+#[test]
+fn panels_switched_off_are_reported_not_restored() {
+    // SNV 30.10.: TVs B and C off, a restore dissolved the wall and could not re-form it (-191).
+    let mut h = KeeperHistory::default();
+    let read = vec![grid(1, 1, &[A]), grid(1, 1, &[GRABBER])];
+    for k in 0..(CONFIRM_READS as u64 * 3) {
+        assert_eq!(
+            decide(&def(), Ok(read.clone()), false, false, &mut h, k * 10_000),
+            KeeperAction::None
+        );
+    }
+    assert!(!h.matches);
+    assert_eq!(h.missing, vec![B, C]);
+}
+
+#[test]
+fn panels_back_on_clear_the_report_and_restore() {
+    let mut h = KeeperHistory::default();
+    let partial = vec![grid(1, 1, &[A]), grid(1, 1, &[C])];
+    decide(&def(), Ok(partial), false, false, &mut h, 0);
+    assert_eq!(h.missing, vec![B]);
+    let separate = vec![grid(1, 1, &[A]), grid(1, 1, &[B]), grid(1, 1, &[C])];
+    let (action, _) = confirmed(&separate, &mut h, 10_000);
+    assert!(h.missing.is_empty());
+    assert_eq!(action, KeeperAction::Restore(RESTORE.to_vec()));
+}
+
+#[test]
+fn collapsed_span_lists_no_wall_panel_and_is_not_missing() {
+    let mut h = KeeperHistory::default();
+    decide(&def(), Ok(collapsed()), false, true, &mut h, 0);
+    assert!(h.missing.is_empty());
+}
+
+#[test]
+fn intact_wall_and_live_span_report_nothing_missing() {
+    let mut h = KeeperHistory::default();
+    decide(&def(), Ok(wall()), false, true, &mut h, 0);
+    assert!(h.missing.is_empty());
+    decide(
+        &def(),
+        Ok(vec![grid(1, 1, &[GRABBER])]),
+        true,
+        true,
+        &mut h,
+        10_000,
+    );
+    assert!(h.missing.is_empty());
+}

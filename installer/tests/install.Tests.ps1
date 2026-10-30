@@ -99,3 +99,20 @@ Describe 'Register-EngineTask' {
         Get-Content (Join-Path $root 'watchdog.ps1') -Raw | Should -Match "Start-ScheduledTask -TaskPath '\\WallBridge\\' -TaskName 'WallBridge Engine'"
     }
 }
+
+Describe 'Stop-Engines' {
+    BeforeAll {
+        $root = Join-Path $TestDrive 'stop'
+        # A process that exits between the listing and Stop-Process (install at 09:42 on 30.10.
+        # failed on "Cannot find a process with the process identifier 11212").
+        $gone = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c exit' -PassThru -WindowStyle Hidden
+        $gone.WaitForExit()
+        $gonePid = $gone.Id
+        Mock -ModuleName WallBridge.Install Stop-ScheduledTask {}
+        Mock -ModuleName WallBridge.Install Get-Process { [pscustomobject]@{ ProcessName = 'wall-bridge'; Id = $gonePid } } -ParameterFilter { $Name }
+    }
+    It 'tolerates a process that already exited' {
+        { Stop-Engines -Root $root } | Should -Not -Throw
+        Get-Content (Join-Path $root 'logs\install.log') -Raw | Should -Match "pid $gonePid already exited"
+    }
+}

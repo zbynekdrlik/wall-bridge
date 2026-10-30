@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 use wb_core::config::{drift_warnings, Config};
-use wb_core::status::specialized_from_targets;
+use wb_core::status::{foreign_span, specialized_from_targets, wall_target_present};
 use wb_core::topology::{decide, span_live, Grid, KeeperAction, KeeperHistory, Step, WallDef};
 use wb_topology::{Nvapi, RawGrid, PINNED};
 
@@ -17,6 +17,16 @@ use wb_topology::{Nvapi, RawGrid, PINNED};
 const SETTLE: Duration = Duration::from_secs(3);
 /// Wait after the Settings toggle before reading the specialization again.
 const SPECIALIZE_SETTLE: Duration = Duration::from_secs(5);
+
+/// A child process without a console window: the engine is a GUI-subsystem exe, so a console
+/// child would pop a new window on the operator's desktop.
+fn hidden(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut c = std::process::Command::new(program);
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -27,7 +37,7 @@ fn now_ms() -> u64 {
 
 /// Local time as `yyyy-MM-ddTHH:mm:ss` (for PowerShell's StartTime comparison).
 fn local_now() -> String {
-    std::process::Command::new("powershell.exe")
+    hidden("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -40,7 +50,7 @@ fn local_now() -> String {
 }
 
 fn os_build() -> Option<u32> {
-    let out = std::process::Command::new("reg")
+    let out = hidden("reg")
         .args([
             "query",
             r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
@@ -70,20 +80,21 @@ fn to_raw(grids: &[Grid], def: &WallDef, read: &[RawGrid], pinned: &RawGrid) -> 
         .collect()
 }
 
+fn targets() -> Vec<String> {
+    wb_scanout::list_targets().unwrap_or_else(|e| {
+        warn!(err = ?e, "list display targets failed");
+        Vec::new()
+    })
+}
+
 fn is_specialized(monitor: &str) -> bool {
-    match wb_scanout::list_targets() {
-        Ok(t) => specialized_from_targets(&t, monitor),
-        Err(e) => {
-            warn!(err = ?e, "list display targets failed");
-            false
-        }
-    }
+    specialized_from_targets(&targets(), monitor)
 }
 
 /// The proven Settings toggle (`tools\spec_toggle.ps1`, UIA on "Remove display from desktop").
 fn specialize(script: &PathBuf, settings_name: &str) -> Result<(), String> {
     let started = local_now();
-    let out = std::process::Command::new("powershell.exe")
+    let out = hidden("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -106,7 +117,7 @@ fn specialize(script: &PathBuf, settings_name: &str) -> Result<(), String> {
     let close = format!(
         "Get-Process SystemSettings -ErrorAction SilentlyContinue | Where-Object {{ $_.StartTime -ge [datetime]'{started}' }} | Stop-Process -Force"
     );
-    let _ = std::process::Command::new("powershell.exe")
+    let _ = hidden("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &close])
         .output();
     if out.status.success() {
@@ -154,8 +165,14 @@ fn restore(
                 }
             }
             Step::Specialize => {
-                if is_specialized(&cfg.wall.monitor) {
+                let t = targets();
+                if specialized_from_targets(&t, &cfg.wall.monitor) {
                     continue;
+                }
+                // Never toggle a span that is not the wall (generic EDIDs, 5760 wide).
+                if !wall_target_present(&t, &cfg.wall.monitor) {
+                    error!(monitor = %cfg.wall.monitor, foreign = ?foreign_span(&t, &cfg.wall.monitor), "restore: the wall's display target is not there, not specializing");
+                    return false;
                 }
                 warn!("wall is back on the desktop, removing it again");
                 if let Err(e) = specialize(script, &cfg.topology.settings_name) {
@@ -204,9 +221,11 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) {
             warn!(err = %e, "topology read failed");
         }
         let was = h.matches;
+        let was_missing = h.missing.clone();
         // Off the vblank path: this thread may list the Display.Core targets. The engine's own
         // flag is stale: Windows can put the wall back on the desktop under a held target.
-        let specialized = is_specialized(&cfg.wall.monitor);
+        let live_targets = targets();
+        let specialized = specialized_from_targets(&live_targets, &cfg.wall.monitor);
         let span_live = {
             let st = status.read().expect("status lock");
             span_live(
@@ -217,6 +236,9 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) {
             )
         };
         let action = decide(&def, read.clone(), span_live, specialized, &mut h, now_ms());
+        if was_missing != h.missing {
+            warn!(missing = ?h.missing, "wall displays listed changed (missing ones are not restored)");
+        }
         if was != h.matches {
             info!(matches = h.matches, span_live, unknown = h.unknown, grids = ?read, "topology changed");
         }
@@ -257,6 +279,19 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) {
         let mut warnings = drift_warnings(&cfg.topology, os, driver);
         if h.unknown {
             warnings.push("Surround: wall displays not visible and the wall not acquired".into());
+        }
+        if !h.missing.is_empty() {
+            let ids: Vec<String> = h.missing.iter().map(|id| format!("0x{id:08x}")).collect();
+            warnings.push(format!(
+                "Surround: wall TVs not detected ({}), are they switched on?",
+                ids.join(", ")
+            ));
+        }
+        if let Some(id) = foreign_span(&live_targets, &cfg.wall.monitor) {
+            warnings.push(format!(
+                "Surround span {id} is not the wall {}: TVs off when it was formed?",
+                cfg.wall.monitor
+            ));
         }
         if h.read_errors >= 3 {
             warnings.push(format!(

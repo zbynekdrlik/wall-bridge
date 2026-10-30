@@ -1,4 +1,7 @@
 //! `wall-bridge.exe [--config <path>]`: the engine plus the status API.
+//! A GUI-subsystem exe: it starts at logon of the operator's account and must not open a
+//! console window on his desktop.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]
 fn main() {
@@ -12,6 +15,9 @@ fn main() {
 
     const ROOT: &str = r"C:\ProgramData\WallBridge";
 
+    if std::env::args().len() > 1 {
+        attach_console();
+    }
     let mut config_path = PathBuf::from(ROOT).join("config.toml");
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -189,6 +195,20 @@ fn topology_cli(what: &str, cfg: &wb_core::config::Config) -> i32 {
             eprintln!("--topology read|separate, got '{other}'");
             2
         }
+    }
+}
+
+/// CLI output (`--version`, `--topology`) from a GUI-subsystem exe: a redirected stdout
+/// (PowerShell capture, a pipe) already works; started from a console, print into it.
+#[cfg(windows)]
+fn attach_console() {
+    use windows::Win32::System::Console::{
+        AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
+    };
+    let redirected =
+        unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.is_ok_and(|h| !h.is_invalid() && !h.0.is_null());
+    if !redirected {
+        let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
     }
 }
 

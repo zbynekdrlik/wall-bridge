@@ -16,8 +16,7 @@ Import-Module (Join-Path $PSScriptRoot 'WallBridge.Install.psm1') -Force
 
 $exeSrc = Join-Path $Source 'wall-bridge.exe'
 if (-not (Test-Path $exeSrc)) { throw "no wall-bridge.exe in $Source" }
-$version = (& $exeSrc --version).Trim()
-if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "unexpected version output '$version'" }
+$version = Get-ExeVersion $exeSrc
 Write-InstallLog $Root "installing $version from $Source"
 
 Stop-Engines $Root
