@@ -47,4 +47,4 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
 - Event mode = hands off.
 
 ## Related projects
-- Reach it through the peer channel (`peer_send`).
+- songplayer: reach it through the peer channel (`peer_send`), only about the SNV wall on the Resolume PC.
