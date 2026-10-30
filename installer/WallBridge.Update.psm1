@@ -38,4 +38,16 @@ function Test-Healthy($Status, [string]$Version) {
     $null -ne $Status -and $Status.version -eq $Version -and $Status.display.target_acquired -eq $true
 }
 
-Export-ModuleMember -Function Test-InWindow, Get-UpdateDecision, Get-AssetVersion, Get-ExpectedHash, Test-Healthy
+# `[api] port` from config.toml (the engine's status port), default 8930.
+function Get-ApiPort([string]$ConfigPath) {
+    if (-not (Test-Path $ConfigPath)) { return 8930 }
+    $section = ''
+    foreach ($line in Get-Content $ConfigPath) {
+        $l = ($line -replace '#.*$', '').Trim()
+        if ($l -match '^\[(.+)\]$') { $section = $Matches[1].Trim(); continue }
+        if ($section -eq 'api' -and $l -match '^port\s*=\s*(\d+)$') { return [int]$Matches[1] }
+    }
+    8930
+}
+
+Export-ModuleMember -Function Test-InWindow, Get-UpdateDecision, Get-AssetVersion, Get-ExpectedHash, Test-Healthy, Get-ApiPort

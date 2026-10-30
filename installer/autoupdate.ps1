@@ -47,7 +47,9 @@ try {
     $got = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
     if ($want -ne $got) { Log "hash mismatch for $($zip.name): want $want got $got, deleting"; Remove-Item $zipPath -Force; exit 0 }
 
-    if (-not (Test-InWindow $Now)) { Log "$candidate downloaded and verified, waiting for the 03:00-05:00 window"; exit 0 }
+    # The download may take minutes: decide on the time now, not at the start.
+    $checkTime = if ($PSBoundParameters.ContainsKey('Now')) { $Now } else { Get-Date }
+    if (-not (Test-InWindow $checkTime)) { Log "$candidate downloaded and verified, waiting for the 03:00-05:00 window"; exit 0 }
 
     $src = Join-Path $dl "wall-bridge-$candidate"
     if (Test-Path $src) { Remove-Item $src -Recurse -Force }
@@ -55,11 +57,12 @@ try {
     Log "installing $candidate over $current"
     & (Join-Path $src 'install.ps1') -Source $src -Root $Root -User $User
 
+    $port = Get-ApiPort (Join-Path $Root 'config.toml')
     $ok = $false
     foreach ($i in 1..15) {
         Start-Sleep 2
         try {
-            $st = Invoke-RestMethod 'http://127.0.0.1:8930/api/status' -TimeoutSec 2
+            $st = Invoke-RestMethod "http://127.0.0.1:$port/api/status" -TimeoutSec 2
             if (Test-Healthy $st $candidate) { $ok = $true; break }
         } catch { }
     }

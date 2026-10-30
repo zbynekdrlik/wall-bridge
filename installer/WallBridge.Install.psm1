@@ -16,10 +16,15 @@ function Write-InstallLog([string]$Root, [string]$Message) {
     Add-Content -Path (Join-Path $Root 'logs\install.log') -Value $line
 }
 
-# Versions to delete: everything except the newest two (current + rollback).
-function Get-PrunableVersions([string[]]$Versions, [string]$Current) {
-    $sorted = $Versions | Sort-Object { [version]$_ } -Descending
-    $keep = @($Current) + @($sorted | Where-Object { $_ -ne $Current } | Select-Object -First 1)
+# Versions to delete: everything except the current one and the rollback target (the
+# version installed before, else the newest other one).
+function Get-PrunableVersions([string[]]$Versions, [string]$Current, [string]$Previous = '') {
+    $rollback = if ($Previous -and $Previous -ne $Current -and $Versions -contains $Previous) {
+        $Previous
+    } else {
+        $Versions | Where-Object { $_ -ne $Current } | Sort-Object { [version]$_ } -Descending | Select-Object -First 1
+    }
+    $keep = @($Current, $rollback) | Where-Object { $_ }
     @($Versions | Where-Object { $keep -notcontains $_ })
 }
 
@@ -43,15 +48,20 @@ function Get-DefaultConfig {
 function Install-AppFiles([string]$Source, [string]$Root, [string]$Version) {
     $dir = Join-Path $Root "app\$Version"
     New-Item -ItemType Directory -Force $dir | Out-Null
-    Copy-Item (Join-Path $Source '*') $dir -Recurse -Force
-    Set-Content -Path (Join-Path $Root 'current.txt') -Value $Version -NoNewline
+    $currentFile = Join-Path $Root 'current.txt'
+    $previous = if (Test-Path $currentFile) { (Get-Content $currentFile -Raw).Trim() } else { '' }
+    # A rollback installs from app\<version> itself: nothing to copy then.
+    if ((Resolve-Path $Source).Path.TrimEnd('\') -ne (Resolve-Path $dir).Path.TrimEnd('\')) {
+        Copy-Item (Join-Path $Source '*') $dir -Recurse -Force
+    }
+    Set-Content -Path $currentFile -Value $Version -NoNewline
     $config = Join-Path $Root 'config.toml'
     if (-not (Test-Path $config)) {
         Set-Content -Path $config -Value (Get-DefaultConfig)
         Write-InstallLog $Root "wrote default $config"
     }
     $versions = @(Get-ChildItem (Join-Path $Root 'app') -Directory | ForEach-Object Name)
-    foreach ($old in Get-PrunableVersions -Versions $versions -Current $Version) {
+    foreach ($old in Get-PrunableVersions -Versions $versions -Current $Version -Previous $previous) {
         Remove-Item (Join-Path $Root "app\$old") -Recurse -Force
         Write-InstallLog $Root "pruned app\$old"
     }

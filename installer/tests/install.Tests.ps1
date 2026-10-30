@@ -1,4 +1,6 @@
 BeforeAll {
+    # These tests register and delete tasks under \WallBridge\: never on a box with an install.
+    if (Test-Path 'C:\ProgramData\WallBridge\current.txt') { throw 'refusing to run on a machine with wall-bridge installed' }
     Import-Module (Join-Path $PSScriptRoot '..\WallBridge.Install.psm1') -Force
 }
 
