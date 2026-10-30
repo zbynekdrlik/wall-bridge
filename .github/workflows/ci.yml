@@ -87,6 +87,14 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo build --release --workspace
+      - name: Installer reads the GUI exe's version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module ./installer/WallBridge.Install.psm1 -Force
+          $want = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $got = Get-ExeVersion target/release/wall-bridge.exe
+          if ($got -ne $want) { throw "Get-ExeVersion '$got', Cargo.toml '$want'" }
       - uses: actions/upload-artifact@v4
         with:
           name: wall-bridge-windows
@@ -149,7 +157,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $v = (& target/release/wall-bridge.exe --version).Trim()
+          Import-Module ./installer/WallBridge.Install.psm1 -Force
+          $v = Get-ExeVersion target/release/wall-bridge.exe
           "VERSION=$v" >> $env:GITHUB_ENV
           $d = "dist/wall-bridge-$v"
           New-Item -ItemType Directory -Force $d | Out-Null
