@@ -148,6 +148,13 @@ pub fn span_live(acquired: bool, specialized: bool, size: (u32, u32), want: (u32
     acquired && specialized && size == want
 }
 
+/// NVAPI lists at least one of the wall's own displays (not a collapsed span's id).
+fn wall_display_listed(def: &WallDef, grids: &[Grid]) -> bool {
+    grids
+        .iter()
+        .any(|g| g.ids.iter().any(|id| def.ids.contains(id)))
+}
+
 /// One keeper check. A read error never triggers an action and breaks a confirmation run.
 ///
 /// `span_live`: the engine scans out to the wall's specialized Display.Core target at the wall
@@ -157,6 +164,9 @@ pub fn span_live(acquired: bool, specialized: bool, size: (u32, u32), want: (u32
 /// `specialized`: the wall's Display.Core target is marked special-purpose. A grid that NVAPI
 /// lists intact while the span is neither live nor specialized is back on the desktop: only
 /// [`Step::Specialize`] is needed.
+///
+/// Some of the wall's displays listed and others not: those TVs are off. Nothing is done and
+/// [`KeeperHistory::missing`] names them.
 pub fn decide(
     def: &WallDef,
     read: Result<Vec<Grid>, String>,
@@ -180,6 +190,19 @@ pub fn decide(
         .iter()
         .any(|g| g.ids.iter().any(|id| !def.keep_single.contains(id)));
     h.unknown = !h.matches && !wall_visible;
+    let listed = |id: &u32| grids.iter().any(|g| g.ids.contains(id));
+    h.missing = if h.matches || !wall_display_listed(def, &grids) {
+        Vec::new()
+    } else {
+        def.ids.iter().filter(|id| !listed(id)).copied().collect()
+    };
+    if !h.missing.is_empty() {
+        // Some wall TVs are off: a restore would dissolve the wall and fail to re-form it
+        // (SNV 30.10.2026). Report and wait for them.
+        h.mismatches = 0;
+        h.on_desktop = 0;
+        return KeeperAction::None;
+    }
     if h.unknown {
         // Re-forming blind could take displays from Arena: report, do not act.
         h.mismatches = 0;
