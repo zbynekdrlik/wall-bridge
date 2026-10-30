@@ -129,6 +129,21 @@ function Register-UpdateTask([string]$AppDir, [string]$Root, [string]$User) {
         -Trigger @($hourly, $boot) -Principal $principal -Settings $settings -Force | Out-Null
 }
 
+# wall-bridge.exe is a GUI-subsystem exe: PowerShell's '& exe --version' closes the pipe before
+# it prints (os error 232), so its stdout goes to a file.
+function Get-ExeVersion([string]$Exe) {
+    $out = [IO.Path]::GetTempFileName()
+    try {
+        $p = Start-Process -FilePath $Exe -ArgumentList '--version' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out
+        if ($p.ExitCode -ne 0) { throw "$Exe --version exited $($p.ExitCode)" }
+        $v = (Get-Content $out -Raw).Trim()
+    } finally {
+        Remove-Item $out -ErrorAction SilentlyContinue
+    }
+    if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "unexpected version output '$v' from $Exe" }
+    $v
+}
+
 function Stop-Engines([string]$Root) {
     Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
     foreach ($p in Get-Process -Name 'wall-bridge', 'wall-bridge-tray', 'wb2' -ErrorAction SilentlyContinue) {
@@ -143,6 +158,6 @@ function Stop-Engines([string]$Root) {
     }
 }
 
-Export-ModuleMember -Function Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
+Export-ModuleMember -Function Get-ExeVersion, Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
     Register-EngineTask, Register-WatchdogTask, Register-TrayTask, Register-UpdateTask, Stop-Engines, `
     Write-InstallLog

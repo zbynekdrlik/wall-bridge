@@ -33,6 +33,7 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
 - Autoupgrade follows the stable release, installs only 03:00–05:00, and rolls back when unhealthy. `autoupdate.disabled` stops it; `channel.txt` = `dev` follows `dev-latest`.
 - Status: `http://10.77.9.201:8930/api/status`, dashboard `http://10.77.9.201:8930/`. Logs: `C:\ProgramData\WallBridge\logs\` (engine, install, watchdog); tray log `%LOCALAPPDATA%\WallBridge\logs`.
 - Diagnostics on the PC: `wall-bridge.exe --topology read` (and `separate` for a restore test, wall goes dark).
+  - `wall-bridge.exe` is a GUI-subsystem exe (no console window at logon). From PowerShell, send its output to a file: `Start-Process -Wait -NoNewWindow -RedirectStandardOutput out.txt`. `& exe` loses the output (os error 232). The installer uses `Get-ExeVersion`.
 - The old MVP stays in `C:\ProgramData\SongPlayer\diag\wall-bridge\mvp\` for rollback.
 - Diagnostics ship in the bundle under `tools\diag\`: `displays.ps1`, grabber latency `grab_ts.py` + `lat_pair.py` (sources: `installer/tools/diag/`).
 
