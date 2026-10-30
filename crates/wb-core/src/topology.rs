@@ -139,6 +139,13 @@ impl WallDef {
     }
 }
 
+/// The engine scans out to the whole wall and Windows still has it off the desktop.
+/// `specialized` must come from the live target list: Windows can put the wall back on the
+/// desktop while the engine keeps its target and its vblanks (measured on SNV 30.10.2026).
+pub fn span_live(acquired: bool, specialized: bool, size: (u32, u32), want: (u32, u32)) -> bool {
+    acquired && specialized && size == want
+}
+
 /// One keeper check. A read error never triggers an action and breaks a confirmation run.
 ///
 /// `span_live`: the engine scans out to the wall's specialized Display.Core target at the wall

@@ -40,3 +40,23 @@ fn from_grid_keeps_template_entries_and_clears_the_rest() {
 fn short_blob_is_rejected() {
     assert!(RawGrid::from_bytes(&PINNED[..100]).is_none());
 }
+
+#[test]
+fn separated_display_drops_the_surround_flags() {
+    // Live on SNV 30.10.: 1x1 grids carrying the 1x3 template's flags (0x12) made
+    // SetDisplayGrids return -5. The reference dissolve script sets 1x1 grids with flags 0.
+    let pinned = RawGrid::from_bytes(PINNED).unwrap();
+    assert_eq!(pinned.flags, 0x12);
+    let single = Grid {
+        rows: 1,
+        cols: 1,
+        ids: vec![0x8006_1086],
+        width: 2560,
+        height: 1080,
+        freq: 60,
+    };
+    assert_eq!(RawGrid::from_grid(&single, &pinned).flags, 0);
+    // The re-formed wall keeps them, as the reference re-form sets the pinned grid as is.
+    let wall = pinned.to_grid();
+    assert_eq!(RawGrid::from_grid(&wall, &pinned).flags, 0x12);
+}

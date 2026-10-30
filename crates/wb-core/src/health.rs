@@ -9,6 +9,8 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
     DisplayNotAcquired,
+    /// The engine holds its target, but Windows shows the desktop on the wall.
+    DisplayOnDesktop,
     TopologyGaveUp,
     TopologyMismatch,
     SenderLost,
@@ -52,6 +54,8 @@ pub fn evaluate(i: &Inputs) -> State {
     let mut failed = vec![];
     if !i.display.target_acquired {
         failed.push(Reason::DisplayNotAcquired);
+    } else if !i.display.specialized {
+        failed.push(Reason::DisplayOnDesktop);
     }
     if i.topology.gave_up {
         failed.push(Reason::TopologyGaveUp);

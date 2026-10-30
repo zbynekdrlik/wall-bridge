@@ -203,3 +203,21 @@ fn specialized_from_target_list() {
     let disconnected = vec!["GSM779465795_0F_07DD_BC usage=2 connected=false".to_string()];
     assert!(!specialized_from_targets(&disconnected, "GSM779465795"));
 }
+
+#[test]
+fn wall_on_the_desktop_is_failed() {
+    // The engine holds its target, but Windows shows the desktop on the wall.
+    let mut d = display(true);
+    d.specialized = false;
+    let s = evaluate(&Inputs {
+        display: &d,
+        topology: &topo(true, 0),
+        sender: &sender(true, Some(40)),
+        pacing: &window(0),
+    });
+    assert_eq!(s, State::Failed(vec![Reason::DisplayOnDesktop]));
+    assert_eq!(
+        serde_json::to_value(Reason::DisplayOnDesktop).unwrap(),
+        "display_on_desktop"
+    );
+}

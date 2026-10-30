@@ -45,6 +45,7 @@ fn reason_text(r: &serde_json::Value) -> String {
             "topology_mismatch" => "Surround nesedí s definíciou".into(),
             "topology_gave_up" => "Surround sa nedá obnoviť".into(),
             "display_not_acquired" => "stena nie je získaná".into(),
+            "display_on_desktop" => "stena je na ploche Windows".into(),
             other => other.into(),
         },
         serde_json::Value::Object(o) => match o.get("missed_vblanks") {

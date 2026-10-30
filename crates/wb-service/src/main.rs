@@ -3,6 +3,7 @@
 #[cfg(windows)]
 fn main() {
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, RwLock};
     use tracing::{error, info};
     use wb_core::config::Config;
@@ -85,11 +86,12 @@ fn main() {
         warnings: vec![],
     }));
 
+    let reacquire = Arc::new(AtomicBool::new(false));
     if cfg.topology.enabled {
-        let (kcfg, kstatus) = (cfg.clone(), status.clone());
+        let (kcfg, kstatus, kreacquire) = (cfg.clone(), status.clone(), reacquire.clone());
         std::thread::Builder::new()
             .name("keeper".into())
-            .spawn(move || wb_service::keeper::run(kcfg, kstatus))
+            .spawn(move || wb_service::keeper::run(kcfg, kstatus, kreacquire))
             .expect("keeper thread");
     } else {
         info!("surround keeper disabled in config");
@@ -121,7 +123,7 @@ fn main() {
         })
         .expect("api thread");
 
-    if let Err(e) = wb_service::engine::run(cfg, status) {
+    if let Err(e) = wb_service::engine::run(cfg, status, reacquire) {
         error!(err = ?e, "engine failed to start");
         std::process::exit(1);
     }
