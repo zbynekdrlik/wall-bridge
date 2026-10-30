@@ -35,3 +35,8 @@ paths:
   - Safe order: specialize, restart Arena, connect scene, start bridge. A display vanishing under a running Arena stalls it.
   - The grabber shows Arena's direct output unless routed through the bridge: compare latency only on the same path.
 - **NVAPI with a specialized wall:** `--topology separate` cannot touch the wall while it is off the desktop (NVAPI does not list it). A restore test first returns the wall to the desktop (`spec_toggle.ps1 -Want off`, run in `Resolume`'s session through a one-shot interactive task).
+- **Reboot with the wall specialized (30.10.):** Windows keeps the Surround grid and the specialization; wall-bridge is `ok` ~2 min after boot without a restore.
+  - The grabber becomes `\\.\DISPLAY1` (was DISPLAY2 while the wall sat on the desktop). Arena binds its "Display" output to the adapter output (`…\Video\{GUID}\0001`), so that output does not open. Accepted by the owner: the grabber is only for measurement; re-point the output then, with his OK.
+- **Tray icon visibility:** Windows 11 keys a notify icon by exe path (`HKCU\Control Panel\NotifyIconSettings`), so each `app\<version>\` is a new, hidden icon. The tray sets `IsPromoted=1` itself; Explorer applies it at once.
+- **`wall-bridge.exe` is a GUI-subsystem exe:** `& exe --version` from PowerShell loses the output (os error 232). Use `Get-ExeVersion` / `Start-Process -RedirectStandardOutput`.
+- **Tray log** is held open by the tray: read it with a shared `FileStream` (`[IO.File]::Open(p,'Open','Read','ReadWrite')`), not `Get-Content`.
