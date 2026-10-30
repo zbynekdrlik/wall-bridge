@@ -23,6 +23,20 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Local time as `yyyy-MM-ddTHH:mm:ss` (for PowerShell's StartTime comparison).
+fn local_now() -> String {
+    std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-Date -Format s",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "2000-01-01T00:00:00".into())
+}
+
 fn os_build() -> Option<u32> {
     let out = std::process::Command::new("reg")
         .args([
@@ -66,6 +80,7 @@ fn is_specialized(monitor: &str) -> bool {
 
 /// The proven Settings toggle (`tools\spec_toggle.ps1`, UIA on "Remove display from desktop").
 fn specialize(script: &PathBuf, settings_name: &str) -> Result<(), String> {
+    let started = local_now();
     let out = std::process::Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -84,9 +99,13 @@ fn specialize(script: &PathBuf, settings_name: &str) -> Result<(), String> {
         stderr = %String::from_utf8_lossy(&out.stderr).trim(),
         "specialization toggle ran"
     );
-    // The toggle leaves Settings open; it must not stay over the operator's screens.
-    let _ = std::process::Command::new("taskkill")
-        .args(["/IM", "SystemSettings.exe", "/F"])
+    // The toggle leaves Settings open; close only the window it opened, never one the
+    // operator had open before.
+    let close = format!(
+        "Get-Process SystemSettings -ErrorAction SilentlyContinue | Where-Object {{ $_.StartTime -ge [datetime]'{started}' }} | Stop-Process -Force"
+    );
+    let _ = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &close])
         .output();
     if out.status.success() {
         Ok(())
@@ -160,6 +179,7 @@ pub fn run(cfg: Config, status: Shared) {
         .unwrap_or_else(|| PathBuf::from(r"tools\spec_toggle.ps1"));
     let mut h = KeeperHistory::default();
     let mut nv: Option<Nvapi> = None;
+    let mut gave_up_logged = false;
     let os = os_build();
     info!(?def, os_build = ?os, script = %script.display(), "surround keeper starting");
 
@@ -197,10 +217,13 @@ pub fn run(cfg: Config, status: Shared) {
         match action {
             KeeperAction::None => {}
             KeeperAction::GiveUp => {
-                error!(
-                    failures = h.failures(now_ms()),
-                    "surround keeper gave up, needs attention"
-                )
+                if !gave_up_logged {
+                    error!(
+                        failures = h.failures(now_ms()),
+                        "surround keeper gave up, needs attention"
+                    );
+                    gave_up_logged = true;
+                }
             }
             KeeperAction::Restore(steps) => {
                 warn!(?steps, grids = ?read, "surround layout differs from the definition, restoring");
@@ -218,6 +241,9 @@ pub fn run(cfg: Config, status: Shared) {
             }
         }
 
+        if !h.gave_up {
+            gave_up_logged = false;
+        }
         let mut warnings = drift_warnings(&cfg.topology, os, driver);
         if h.unknown {
             warnings.push("Surround: wall displays not visible and the wall not acquired".into());
