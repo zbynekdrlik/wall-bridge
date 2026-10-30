@@ -78,16 +78,17 @@ pub fn view(status: Option<&Status>) -> View {
     View { light, line }
 }
 
-/// A 16×16 RGBA disc in the light's colour.
+/// A 16×16 RGBA picture of the wall (three panels) in the light's colour.
 pub fn icon_rgba(light: Light) -> Vec<u8> {
-    const N: i32 = 16;
+    const N: usize = 16;
+    // The wall: three panels side by side (x 0-4, 6-9, 11-15), one pixel apart, rows 4-11.
+    // A plain disc looked like DanteSync's icon in the same tray (owner 30.10.2026).
     let [r, g, b] = light.rgb();
-    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    let mut px = Vec::with_capacity(N * N * 4);
     for y in 0..N {
         for x in 0..N {
-            let (dx, dy) = (2 * x + 1 - N, 2 * y + 1 - N);
-            let inside = dx * dx + dy * dy <= (N - 2) * (N - 2);
-            px.extend_from_slice(&if inside { [r, g, b, 255] } else { [0, 0, 0, 0] });
+            let panel = (4..=11).contains(&y) && x != 5 && x != 10;
+            px.extend_from_slice(&if panel { [r, g, b, 255] } else { [0, 0, 0, 0] });
         }
     }
     px
