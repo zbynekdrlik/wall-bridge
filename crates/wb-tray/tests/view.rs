@@ -59,11 +59,22 @@ fn unknown_reason_passes_through() {
 }
 
 #[test]
-fn icon_is_a_coloured_disc() {
+fn icon_is_the_three_panel_wall() {
+    // A plain disc looked like DanteSync's icon in the same tray (owner 30.10.2026).
     let px = icon_rgba(Light::Red);
     assert_eq!(px.len(), 16 * 16 * 4);
     let at = |x: usize, y: usize| &px[(y * 16 + x) * 4..(y * 16 + x) * 4 + 4];
-    assert_eq!(at(8, 8), &[0xcf, 0x22, 0x2e, 255]);
-    assert_eq!(at(0, 0)[3], 0, "corner is transparent");
+    let red = [0xcf, 0x22, 0x2e, 255];
+    for x in [0, 2, 4, 6, 8, 9, 11, 13, 15] {
+        assert_eq!(at(x, 8), &red, "panel pixel at x={x}");
+    }
+    for x in [5, 10] {
+        assert_eq!(at(x, 8)[3], 0, "gap between panels at x={x}");
+    }
+    for y in [0, 3, 12, 15] {
+        assert_eq!(at(8, y)[3], 0, "above/below the wall at y={y}");
+    }
+    assert_eq!(at(0, 4), &red, "top-left panel corner");
+    assert_eq!(at(15, 11), &red, "bottom-right panel corner");
     assert_ne!(icon_rgba(Light::Green), px);
 }
