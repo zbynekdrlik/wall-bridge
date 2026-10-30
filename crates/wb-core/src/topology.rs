@@ -62,6 +62,8 @@ pub struct KeeperHistory {
     pub gave_up: bool,
     pub last_restore_ms: Option<u64>,
     mismatches: u32,
+    /// Reads in a row with the grid intact but the wall back on the desktop.
+    on_desktop: u32,
     failed_at: Vec<u64>,
 }
 
@@ -142,10 +144,15 @@ impl WallDef {
 /// `span_live`: the engine scans out to the wall's specialized Display.Core target at the wall
 /// size. NVAPI does not list the Mosaic grid of a span that is removed from the desktop
 /// (measured on SNV 30.10.2026), so a live span counts as matching.
+///
+/// `specialized`: the wall's Display.Core target is marked special-purpose. A grid that NVAPI
+/// lists intact while the span is neither live nor specialized is back on the desktop: only
+/// [`Step::Specialize`] is needed.
 pub fn decide(
     def: &WallDef,
     read: Result<Vec<Grid>, String>,
     span_live: bool,
+    specialized: bool,
     h: &mut KeeperHistory,
     now_ms: u64,
 ) -> KeeperAction {
@@ -154,6 +161,7 @@ pub fn decide(
         Err(_) => {
             h.read_errors += 1;
             h.mismatches = 0;
+            h.on_desktop = 0;
             return KeeperAction::None;
         }
     };
@@ -171,8 +179,18 @@ pub fn decide(
     if h.matches {
         h.mismatches = 0;
         h.gave_up = false;
-        return KeeperAction::None;
+        if span_live || specialized {
+            h.on_desktop = 0;
+            return KeeperAction::None;
+        }
+        h.on_desktop += 1;
+        if h.on_desktop < CONFIRM_READS {
+            return KeeperAction::None;
+        }
+        h.on_desktop = 0;
+        return KeeperAction::Restore(vec![Step::Specialize]);
     }
+    h.on_desktop = 0;
     h.mismatches += 1;
     if h.mismatches < CONFIRM_READS {
         return KeeperAction::None;

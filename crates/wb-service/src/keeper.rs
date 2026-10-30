@@ -188,7 +188,9 @@ pub fn run(cfg: Config, status: Shared) {
                 && st.display.height == cfg.wall.height
         };
         let was = h.matches;
-        let action = decide(&def, read.clone(), span_live, &mut h, now_ms());
+        // Off the vblank path: this thread may list the Display.Core targets.
+        let specialized = is_specialized(&cfg.wall.monitor);
+        let action = decide(&def, read.clone(), span_live, specialized, &mut h, now_ms());
         if was != h.matches {
             info!(matches = h.matches, span_live, unknown = h.unknown, grids = ?read, "topology changed");
         }
