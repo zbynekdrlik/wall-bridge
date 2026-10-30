@@ -59,6 +59,8 @@ pub struct KeeperHistory {
     pub read_errors: u32,
     /// Last read showed no wall display at all and no live span: nothing safe to act on.
     pub unknown: bool,
+    /// Wall displays NVAPI does not list while others are listed: TVs off or unplugged.
+    pub missing: Vec<u32>,
     pub gave_up: bool,
     pub last_restore_ms: Option<u64>,
     mismatches: u32,

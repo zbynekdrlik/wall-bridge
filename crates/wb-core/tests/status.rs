@@ -221,3 +221,37 @@ fn wall_on_the_desktop_is_failed() {
         "display_on_desktop"
     );
 }
+
+#[test]
+fn wall_target_present_needs_its_id_connected() {
+    use wb_core::status::wall_target_present;
+    let t = vec![
+        "CEN93200_1E_07E4_EC usage=0 connected=true".to_string(),
+        "GSM779465795_0F_07DD_BC usage=1 connected=true".to_string(),
+    ];
+    assert!(wall_target_present(&t, "GSM779465795"));
+    assert!(!wall_target_present(&t, "NOPE"));
+    let off = vec!["GSM779465795_0F_07DD_BC usage=1 connected=false".to_string()];
+    assert!(!wall_target_present(&off, "GSM779465795"));
+}
+
+#[test]
+fn foreign_span_names_a_surround_target_that_is_not_the_wall() {
+    use wb_core::status::foreign_span;
+    // SNV 30.10.: TVs off, the re-formed span came up as a generic 5760 wide display.
+    let bad = vec![
+        "CEN93200_1E_07E4_EC usage=0 connected=true".to_string(),
+        "NVS10DE65795_0F_07DD_57 usage=1 connected=true".to_string(),
+    ];
+    assert_eq!(
+        foreign_span(&bad, "GSM779465795").as_deref(),
+        Some("NVS10DE65795_0F_07DD_57")
+    );
+    let good = vec![
+        "GSM779465795_0F_07DD_BC usage=2 connected=true".to_string(),
+        "NVS10DE65795_0F_07DD_57 usage=0 connected=true".to_string(),
+    ];
+    assert_eq!(foreign_span(&good, "GSM779465795"), None);
+    let gone = vec!["NVS10DE65795_0F_07DD_57 usage=1 connected=false".to_string()];
+    assert_eq!(foreign_span(&gone, "GSM779465795"), None);
+}
