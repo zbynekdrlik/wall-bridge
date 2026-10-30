@@ -319,6 +319,7 @@ pub fn run(cfg: Config, status: Shared) -> Result<()> {
                             arrivals.push(us);
                         }
                         new_since_check = true;
+                        watch.picture(now_ms());
                         break;
                     }
                     Ok(Probe::Same) => {
