@@ -325,3 +325,35 @@ fn grid_back_on_desktop_is_respecialized() {
     }
     assert!(h.matches);
 }
+
+#[test]
+fn span_live_needs_the_live_specialization() {
+    use wb_core::topology::span_live;
+    // Live on SNV 30.10.: the wall went back to the desktop while the engine still held its
+    // target and reported specialized. Only the live target list may say "off the desktop".
+    assert!(span_live(true, true, (7680, 1080), (7680, 1080)));
+    assert!(!span_live(true, false, (7680, 1080), (7680, 1080)));
+    assert!(!span_live(false, true, (7680, 1080), (7680, 1080)));
+    assert!(!span_live(true, true, (2560, 1080), (7680, 1080)));
+    assert!(!span_live(true, true, (7680, 720), (7680, 1080)));
+}
+
+#[test]
+fn wall_back_on_desktop_under_the_engine_is_respecialized() {
+    let mut h = KeeperHistory::default();
+    let live = span_live_for_test(false);
+    for t in 0..2 {
+        assert_eq!(
+            decide(&def(), Ok(wall()), live, false, &mut h, t * 10_000),
+            KeeperAction::None
+        );
+    }
+    assert_eq!(
+        decide(&def(), Ok(wall()), live, false, &mut h, 20_000),
+        KeeperAction::Restore(vec![Step::Specialize])
+    );
+}
+
+fn span_live_for_test(specialized: bool) -> bool {
+    wb_core::topology::span_live(true, specialized, (7680, 1080), (7680, 1080))
+}
