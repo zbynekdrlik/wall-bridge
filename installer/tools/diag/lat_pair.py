@@ -1,5 +1,7 @@
 # Latency measurement, step 2: python lat_pair.py <events.json> <arrivals.txt>
 # arrivals.txt: one line per new Spout picture, epoch microseconds first (the MVP's --arrivals log).
+# Needs a static scene with text cuts: on moving video every picture is an arrival, so the pairing
+# only returns the time since the last picture and means nothing.
 import json, sys, statistics as st
 
 # Pair each grabber change event with the Spout arrival of that picture: the last arrival
