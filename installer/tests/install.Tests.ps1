@@ -139,3 +139,22 @@ Describe 'Stop-Engines waits' {
         $script:slow.HasExited | Should -BeTrue
     }
 }
+
+Describe 'Invoke-WithEngineRestore' {
+    BeforeAll {
+        $root = Join-Path $TestDrive 'restore'
+        Mock -ModuleName WallBridge.Install Start-ScheduledTask {}
+    }
+    It 'starts the engine and the tray again when the install fails, then fails' {
+        # SNV 30.10. 14:36: the install stopped the engine and the tray, Copy-Item failed, and the
+        # tray stayed off (the watchdog restarts only the engine).
+        { Invoke-WithEngineRestore -Root $root -Action { throw 'copy failed' } } | Should -Throw '*copy failed*'
+        Should -Invoke -ModuleName WallBridge.Install Start-ScheduledTask -Times 1 -Exactly -ParameterFilter { $TaskName -eq 'WallBridge Engine' }
+        Should -Invoke -ModuleName WallBridge.Install Start-ScheduledTask -Times 1 -Exactly -ParameterFilter { $TaskName -eq 'WallBridge Tray' }
+        Get-Content (Join-Path $root 'logs\install.log') -Raw | Should -Match 'install failed: copy failed'
+    }
+    It 'starts nothing when the install succeeds' {
+        Invoke-WithEngineRestore -Root $root -Action { 'fine' } | Should -Be 'fine'
+        Should -Invoke -ModuleName WallBridge.Install Start-ScheduledTask -Times 0 -Exactly
+    }
+}
