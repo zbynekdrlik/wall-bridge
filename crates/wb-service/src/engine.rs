@@ -109,7 +109,8 @@ fn ring(device: &ID3D11Device, n: usize, w: u32, h: u32) -> Result<Vec<ID3D11Tex
             Quality: 0,
         },
         Usage: D3D11_USAGE_DEFAULT,
-        BindFlags: 0,
+        // Render target: slots are cleared when a smaller sender would leave old edges.
+        BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
         CPUAccessFlags: 0,
         MiscFlags: 0,
     };
@@ -120,6 +121,33 @@ fn ring(device: &ID3D11Device, n: usize, w: u32, h: u32) -> Result<Vec<ID3D11Tex
             Ok(t.expect("texture"))
         })
         .collect()
+}
+
+/// Black slots, so a sender smaller than the wall leaves no old picture at the edges.
+fn clear(device: &ID3D11Device, ctx: &ID3D11DeviceContext, slots: &[ID3D11Texture2D]) {
+    for t in slots {
+        let mut rtv: Option<ID3D11RenderTargetView> = None;
+        match unsafe { device.CreateRenderTargetView(t, None, Some(&mut rtv)) } {
+            Ok(()) => {
+                if let Some(v) = rtv {
+                    unsafe { ctx.ClearRenderTargetView(&v, &[0.0, 0.0, 0.0, 1.0]) };
+                }
+            }
+            Err(e) => warn!(err = ?e, "could not clear a ring slot"),
+        }
+    }
+}
+
+fn publish_state(status: &Shared, display: DisplayState, uptime_s: u64) {
+    let mut st = status.write().expect("status lock");
+    st.display = display;
+    st.uptime_s = uptime_s;
+    st.state = evaluate(&Inputs {
+        display: &st.display,
+        topology: &st.topology,
+        sender: &st.sender,
+        pacing: &st.pacing,
+    });
 }
 
 fn display_state(cfg: &Config, scanout: Option<&Scanout>) -> DisplayState {
@@ -168,25 +196,30 @@ pub fn run(cfg: Config, status: Shared) -> Result<()> {
                 let wait = REOPEN_BACKOFF_S[attempt.min(REOPEN_BACKOFF_S.len() - 1)];
                 error!(err = ?e, monitor = %cfg.wall.monitor, retry_s = wait, "display target not acquired");
                 attempt += 1;
-                let mut st = status.write().expect("status lock");
-                st.display = display_state(&cfg, None);
-                st.uptime_s = started.elapsed().as_secs();
-                st.state = evaluate(&Inputs {
-                    display: &st.display,
-                    topology: &st.topology,
-                    sender: &st.sender,
-                    pacing: &st.pacing,
-                });
-                drop(st);
+                publish_state(
+                    &status,
+                    display_state(&cfg, None),
+                    started.elapsed().as_secs(),
+                );
                 std::thread::sleep(std::time::Duration::from_secs(wait));
                 continue;
             }
         };
         let period_us = (1_000_000.0 / scanout.refresh.max(1.0)) as u64;
         let guard_us = cfg.pacing.guard_us;
-        let slots = ring(&device, cfg.pacing.ring, scanout.width, scanout.height)?;
+        let slots = match ring(&device, cfg.pacing.ring, scanout.width, scanout.height) {
+            Ok(s) => s,
+            Err(e) => {
+                error!(err = ?e, "ring allocation failed, re-acquiring");
+                std::thread::sleep(std::time::Duration::from_secs(REOPEN_BACKOFF_S[1]));
+                continue;
+            }
+        };
+        clear(&device, &ctx, &slots);
         let mut pacer = Pacer::new(cfg.pacing.ring);
         let display = display_state(&cfg, Some(&scanout));
+        // Publish at once: the keeper and the updater's health check read it.
+        publish_state(&status, display.clone(), started.elapsed().as_secs());
         let mut arrivals: Vec<u64> = vec![];
         let mut missed = 0u64;
         let mut lock_timeouts = 0u64;
@@ -237,15 +270,21 @@ pub fn run(cfg: Config, status: Shared) -> Result<()> {
                             "open"
                         };
                         match reader.open(h) {
-                            Ok(()) => info!(
-                                action = what,
-                                handle = format_args!("0x{h:x}"),
-                                size = ?reader.size(),
-                                "sender opened"
-                            ),
+                            Ok(()) => {
+                                info!(
+                                    action = what,
+                                    handle = format_args!("0x{h:x}"),
+                                    size = ?reader.size(),
+                                    "sender opened"
+                                );
+                                if reader.size() != Some((display.width, display.height)) {
+                                    clear(&device, &ctx, &slots);
+                                }
+                            }
                             Err(e) => {
-                                error!(action = what, handle = format_args!("0x{h:x}"), err = ?e, "sender open failed");
+                                error!(action = what, handle = format_args!("0x{h:x}"), err = ?e, "sender open failed, retrying at the next check");
                                 reader.close();
+                                watch.forget();
                             }
                         }
                     }
@@ -290,8 +329,9 @@ pub fn run(cfg: Config, status: Shared) -> Result<()> {
                         std::thread::sleep(std::time::Duration::from_micros(BUSY_SLEEP_US))
                     }
                     Err(e) => {
-                        error!(err = ?e, "sender probe failed, closing the sender");
+                        error!(err = ?e, "sender probe failed, re-opening at the next check");
                         reader.close();
+                        watch.forget();
                         break;
                     }
                 }
@@ -349,9 +389,11 @@ pub fn run(cfg: Config, status: Shared) -> Result<()> {
             }
         }
         drop(scanout);
-        let mut st = status.write().expect("status lock");
-        st.display = display_state(&cfg, None);
-        drop(st);
+        publish_state(
+            &status,
+            display_state(&cfg, None),
+            started.elapsed().as_secs(),
+        );
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }

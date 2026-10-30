@@ -6,6 +6,10 @@
 
 use serde::Serialize;
 
+/// Re-open a listed sender after this long without a new picture (a dead texture behind a
+/// live name). Harmless for a static scene: the last picture stays on the wall.
+pub const STALL_REOPEN_MS: u64 = 10_000;
+
 /// What the Windows side read for the sender at one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SenderSeen {
@@ -45,6 +49,8 @@ pub struct SenderWatch {
     connected: bool,
     size: (u32, u32),
     last_picture_ms: Option<u64>,
+    /// Start of the current stall clock (last new picture or last stall re-open).
+    stall_since_ms: Option<u64>,
 }
 
 impl SenderWatch {
@@ -55,7 +61,15 @@ impl SenderWatch {
             connected: false,
             size: (0, 0),
             last_picture_ms: None,
+            stall_since_ms: None,
         }
+    }
+
+    /// The engine could not open the handle or a probe failed: drop it, so the next check
+    /// opens the sender again.
+    pub fn forget(&mut self) {
+        self.open = None;
+        self.connected = false;
     }
 
     /// One check. `seen` is `None` when the sender's mapping cannot be read.
@@ -68,6 +82,7 @@ impl SenderWatch {
     ) -> SenderAction {
         if new_picture {
             self.last_picture_ms = Some(now_ms);
+            self.stall_since_ms = Some(now_ms);
         }
         match seen {
             Some(s) if s.listed => {
@@ -76,13 +91,23 @@ impl SenderWatch {
                 match self.open {
                     None => {
                         self.open = Some(s.handle);
+                        self.stall_since_ms = Some(now_ms);
                         SenderAction::Open(s.handle)
                     }
                     Some(h) if h != s.handle => {
                         self.open = Some(s.handle);
+                        self.stall_since_ms = Some(now_ms);
                         SenderAction::Reopen(s.handle)
                     }
-                    Some(_) => SenderAction::Keep,
+                    Some(h) => {
+                        let since = self.stall_since_ms.unwrap_or(now_ms);
+                        if now_ms.saturating_sub(since) >= STALL_REOPEN_MS {
+                            self.stall_since_ms = Some(now_ms);
+                            SenderAction::Reopen(h)
+                        } else {
+                            SenderAction::Keep
+                        }
+                    }
                 }
             }
             _ => {
