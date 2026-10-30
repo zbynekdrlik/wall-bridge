@@ -187,3 +187,28 @@ jobs:
             gh release create dev-latest @assets --target '${{ github.sha }}' --prerelease --title "wall-bridge $env:VERSION (dev)" --notes "Dev build ${{ github.sha }}"
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wall-bridge-bundle
+          path: |
+            dist/wall-bridge-*.zip
+            dist/SHA256SUMS
+
+  # E2E on the real PC: installs each dev build over the production install on SNV
+  # (self-hosted runner in Resolume's session, docs/runner.md) and checks the wall comes back.
+  snv-e2e:
+    needs: [release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: [self-hosted, snv, wall-bridge]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wall-bridge-bundle
+          path: snv-bundle
+      - name: Install over production and verify the wall
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./e2e/snv/verify.ps1 -Bundle snv-bundle

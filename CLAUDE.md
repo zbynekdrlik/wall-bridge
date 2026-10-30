@@ -23,6 +23,7 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
   - fmt, clippy, Linux tests, coverage floor (`.github/coverage-floor`, wb-core), diff-scoped mutants (wb-core), version check;
   - Windows build + tests, Pester installer tests, Playwright dashboard test (`e2e/`);
   - release: `dev-latest` from dev, `v<version>` from main.
+  - snv-e2e (dev pushes only): the self-hosted runner on SNV installs the bundle over production and runs `e2e/snv/verify.ps1` (status ok with the new version, specialized 7680, sender connected, no engine window, tray promoted, dashboard version). Runner: `docs/runner.md`.
 - Spec: `docs/superpowers/specs/2026-10-29-wall-bridge-production-design.md`. Plan: `docs/superpowers/plans/2026-10-29-wall-bridge-production.md`. Ticket #2.
 
 ## Deploy / test
