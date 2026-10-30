@@ -52,12 +52,15 @@ fn confirmed(read: &[Grid], h: &mut KeeperHistory, t0: u64) -> (KeeperAction, u6
     let mut t = t0;
     for _ in 1..CONFIRM_READS {
         assert_eq!(
-            decide(&def(), Ok(read.to_vec()), false, h, t),
+            decide(&def(), Ok(read.to_vec()), false, true, h, t),
             KeeperAction::None
         );
         t += 10_000;
     }
-    (decide(&def(), Ok(read.to_vec()), false, h, t), t + 10_000)
+    (
+        decide(&def(), Ok(read.to_vec()), false, true, h, t),
+        t + 10_000,
+    )
 }
 
 #[test]
@@ -65,7 +68,7 @@ fn matching_topology_no_action() {
     let mut h = KeeperHistory::default();
     for t in 0..10 {
         assert_eq!(
-            decide(&def(), Ok(wall()), false, &mut h, t * 10_000),
+            decide(&def(), Ok(wall()), false, true, &mut h, t * 10_000),
             KeeperAction::None
         );
     }
@@ -78,16 +81,16 @@ fn collapsed_span_restores_via_separate() {
     // Mismatching reads may be a driver mid-switch: act only on the third one in a row.
     assert_eq!(CONFIRM_READS, 3);
     assert_eq!(
-        decide(&def(), Ok(collapsed()), false, &mut h, 0),
+        decide(&def(), Ok(collapsed()), false, true, &mut h, 0),
         KeeperAction::None
     );
     assert!(!h.matches);
     assert_eq!(
-        decide(&def(), Ok(collapsed()), false, &mut h, 10_000),
+        decide(&def(), Ok(collapsed()), false, true, &mut h, 10_000),
         KeeperAction::None
     );
     assert_eq!(
-        decide(&def(), Ok(collapsed()), false, &mut h, 20_000),
+        decide(&def(), Ok(collapsed()), false, true, &mut h, 20_000),
         KeeperAction::Restore(RESTORE.to_vec())
     );
 }
@@ -95,11 +98,11 @@ fn collapsed_span_restores_via_separate() {
 #[test]
 fn a_matching_read_breaks_the_confirmation() {
     let mut h = KeeperHistory::default();
-    decide(&def(), Ok(collapsed()), false, &mut h, 0);
-    decide(&def(), Ok(collapsed()), false, &mut h, 10_000);
-    decide(&def(), Ok(wall()), false, &mut h, 20_000);
+    decide(&def(), Ok(collapsed()), false, true, &mut h, 0);
+    decide(&def(), Ok(collapsed()), false, true, &mut h, 10_000);
+    decide(&def(), Ok(wall()), false, true, &mut h, 20_000);
     assert_eq!(
-        decide(&def(), Ok(collapsed()), false, &mut h, 30_000),
+        decide(&def(), Ok(collapsed()), false, true, &mut h, 30_000),
         KeeperAction::None
     );
 }
@@ -128,18 +131,25 @@ fn wrong_mode_is_drift() {
 #[test]
 fn failed_read_is_not_drift() {
     let mut h = KeeperHistory::default();
-    decide(&def(), Ok(wall()), false, &mut h, 0);
+    decide(&def(), Ok(wall()), false, true, &mut h, 0);
     for t in 1..=3 {
         assert_eq!(
-            decide(&def(), Err("NVAPI_ERROR".into()), false, &mut h, t * 10_000),
+            decide(
+                &def(),
+                Err("NVAPI_ERROR".into()),
+                false,
+                true,
+                &mut h,
+                t * 10_000
+            ),
             KeeperAction::None
         );
     }
     assert_eq!(h.read_errors, 3);
     // A read error between mismatches breaks the confirmation run.
-    decide(&def(), Ok(collapsed()), false, &mut h, 40_000);
-    decide(&def(), Ok(collapsed()), false, &mut h, 50_000);
-    decide(&def(), Err("x".into()), false, &mut h, 60_000);
+    decide(&def(), Ok(collapsed()), false, true, &mut h, 40_000);
+    decide(&def(), Ok(collapsed()), false, true, &mut h, 50_000);
+    decide(&def(), Err("x".into()), false, true, &mut h, 60_000);
     let (a, _) = confirmed(&collapsed(), &mut h, 70_000);
     assert!(matches!(a, KeeperAction::Restore(_)));
     assert_eq!(h.read_errors, 0, "a good read resets the error count");
@@ -245,7 +255,14 @@ fn live_specialized_span_matches_without_its_grid() {
     let only_grabber = vec![grid(1, 1, &[GRABBER])];
     for t in 0..5 {
         assert_eq!(
-            decide(&def(), Ok(only_grabber.clone()), true, &mut h, t * 10_000),
+            decide(
+                &def(),
+                Ok(only_grabber.clone()),
+                true,
+                true,
+                &mut h,
+                t * 10_000
+            ),
             KeeperAction::None
         );
         assert!(h.matches);
@@ -253,7 +270,14 @@ fn live_specialized_span_matches_without_its_grid() {
     // The same read without a live span shows no wall display at all: unknown, never acted on.
     for t in 5..10 {
         assert_eq!(
-            decide(&def(), Ok(only_grabber.clone()), false, &mut h, t * 10_000),
+            decide(
+                &def(),
+                Ok(only_grabber.clone()),
+                false,
+                true,
+                &mut h,
+                t * 10_000
+            ),
             KeeperAction::None
         );
         assert!(!h.matches);
@@ -275,4 +299,29 @@ fn failure_window_is_exactly_30_minutes() {
     assert_eq!(h.failures(1_000), 1);
     assert_eq!(h.failures(1_000 + FAIL_WINDOW_MS - 1), 1);
     assert_eq!(h.failures(1_000 + FAIL_WINDOW_MS), 0);
+}
+
+#[test]
+fn grid_back_on_desktop_is_respecialized() {
+    // Review I1: the 1x3 grid is intact (NVAPI lists it, so the span is on the desktop), but
+    // the engine cannot hold the wall and it is not specialized: only re-specialize.
+    let mut h = KeeperHistory::default();
+    for t in 0..2 {
+        assert_eq!(
+            decide(&def(), Ok(wall()), false, false, &mut h, t * 10_000),
+            KeeperAction::None
+        );
+    }
+    assert_eq!(
+        decide(&def(), Ok(wall()), false, false, &mut h, 20_000),
+        KeeperAction::Restore(vec![Step::Specialize])
+    );
+    // Specialized again (or the engine holds it): nothing to do.
+    for t in 3..8 {
+        assert_eq!(
+            decide(&def(), Ok(wall()), false, true, &mut h, t * 10_000),
+            KeeperAction::None
+        );
+    }
+    assert!(h.matches);
 }
