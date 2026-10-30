@@ -50,7 +50,12 @@ fn static_scene_is_not_loss() {
     let mut w = SenderWatch::new("Arena - Screen 2");
     w.tick(0, seen(0x4000_2c42), true);
     for t in (500..=600_000).step_by(500) {
-        assert_eq!(w.tick(t, seen(0x4000_2c42), false), SenderAction::Keep);
+        // Never a loss; a periodic re-open of the same handle is allowed (stall re-open).
+        let a = w.tick(t, seen(0x4000_2c42), false);
+        assert!(
+            a == SenderAction::Keep || a == SenderAction::Reopen(0x4000_2c42),
+            "{a:?} at {t}"
+        );
     }
     let s = w.state(600_000);
     assert!(s.connected);
@@ -95,3 +100,4 @@ fn no_picture_yet_has_no_age() {
     w.tick(0, None, false);
     assert_eq!(w.state(100).last_picture_age_ms, None);
 }
+
