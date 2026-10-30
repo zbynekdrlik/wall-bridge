@@ -1,38 +1,17 @@
-[package]
-name = "wall-bridge-mvp"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = ["crates/*"]
 
-[dependencies]
-windows = { version = "0.58", features = [
-  "Win32_Foundation",
-  "Win32_Graphics_Direct3D",
-  "Win32_Graphics_Direct3D11",
-  "Win32_Graphics_Dxgi",
-  "Win32_Graphics_Dxgi_Common",
-  "Win32_Graphics_Gdi",
-  "Win32_System_Memory",
-  "Win32_System_Threading",
-  "Win32_System_LibraryLoader",
-  "Win32_UI_WindowsAndMessaging",
-  "Win32_UI_HiDpi",
-  "Win32_Security",
-  "Win32_Media",
-  "Devices_Display",
-  "Devices_Display_Core",
-  "Foundation",
-  "Foundation_Collections",
-  "Graphics",
-  "Graphics_DirectX",
-  "Graphics_DirectX_Direct3D11",
-  "Foundation_Numerics",
-  "implement",
-  "Win32_System_WinRT",
-  "Win32_System_WinRT_Display",
-] }
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
 
 [profile.release]
 opt-level = 3
 strip = true
 lto = true
 panic = "abort"
+
+[profile.mutants]
+inherits = "test"
+debug = "none"

@@ -1,0 +1,11 @@
+[package]
+name = "wb-topology"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wb-core = { path = "../wb-core" }
+tracing = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }

@@ -11,15 +11,32 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
 - it adds ~2–3 ms latency compared with Arena's direct output.
 
 ## Build
-- Rust, `windows` 0.58, cross-compiled on dev1 for `x86_64-pc-windows-gnu`. The target and mingw are provided system-wide; do not install toolchains in the account.
-- `cargo build --release --target x86_64-pc-windows-gnu`
+- Rust 2021 workspace, `windows` 0.58. Pure logic lives in `crates/wb-core` and is tested and mutated on Linux; the Windows crates sit beside it.
+  - `wb-spout`: Spout reader.
+  - `wb-scanout`: Display.Core.
+  - `wb-topology`: NVAPI Mosaic.
+  - `wb-service`: `wall-bridge.exe`, the engine, keeper and API.
+  - `wb-tray`: `wall-bridge-tray.exe`.
+- Local cross-build on dev1: `cargo build --release --target x86_64-pc-windows-gnu --workspace`. The target and mingw are system-wide; do not install toolchains in the account.
+- Local checks before a push: `cargo fmt --all --check`, `cargo clippy -p wb-core -p wb-service -p wb-tray -p wb-topology --all-targets -- -D warnings`, the same clippy with `--target x86_64-pc-windows-gnu`, `cargo test -p wb-core -p wb-service -p wb-tray -p wb-topology`.
+- CI (`.github/workflows/ci.yml`) is the merge gate:
+  - fmt, clippy, Linux tests, coverage floor (`.github/coverage-floor`, wb-core), diff-scoped mutants (wb-core), version check;
+  - Windows build + tests, Pester installer tests, Playwright dashboard test (`e2e/`);
+  - release: `dev-latest` from dev, `v<version>` from main.
+- Spec: `docs/superpowers/specs/2026-10-29-wall-bridge-production-design.md`. Plan: `docs/superpowers/plans/2026-10-29-wall-bridge-production.md`. Ticket #2.
 
 ## Deploy / test
-- Through the `win-resolume` MCP (remoteos gateway).
-- Today's MVP binary and helper scripts live in `C:\ProgramData\SongPlayer\diag\wall-bridge\` (`wb2.exe`, `spec_toggle.ps1`, `displays.ps1`).
-- Grabber capture scripts live in `C:\ProgramData\SongPlayer\diag\capture\`.
-- Moving to its own folder (e.g. `C:\ProgramData\WallBridge\`) is this project's decision.
-- Run by hand today: `wb2.exe --sender "Arena - Screen 2" --dc GSM779465795 --seconds 86400`.
+- SNV (`win-resolume`, 10.77.9.201) is reached only through the `win-resolume` MCP.
+- Install / upgrade: download a release zip (verify `SHA256SUMS`), expand it, run `install.ps1 -Source <dir>`.
+  - It installs into `C:\ProgramData\WallBridge\app\<version>` and keeps one rollback version.
+  - It registers the tasks `\WallBridge\` Engine (logon of `Resolume`, restart every minute), Tray, Watchdog (SYSTEM, every minute) and Update (SYSTEM, hourly).
+- Autoupgrade follows the stable release, installs only 03:00–05:00, and rolls back when unhealthy. `autoupdate.disabled` stops it; `channel.txt` = `dev` follows `dev-latest`.
+- Status: `http://10.77.9.201:8930/api/status`, dashboard `http://10.77.9.201:8930/`. Logs: `C:\ProgramData\WallBridge\logs\` (engine, install, watchdog); tray log `%LOCALAPPDATA%\WallBridge\logs`.
+- Diagnostics on the PC: `wall-bridge.exe --topology read` (and `separate` for a restore test, wall goes dark).
+- The old MVP stays in `C:\ProgramData\SongPlayer\diag\wall-bridge\mvp\` for rollback. Grabber capture scripts: `C:\ProgramData\SongPlayer\diag\capture\`.
+
+## Playbook router
+- SNV / Windows / Arena gotchas → `.claude/rules/snv-windows.md` (auto-loads on its `paths:`)
 
 ## Owner rules (carried over from songplayer)
 - Never change the operator's Arena composition permanently without his OK.

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wall-bridge</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: light dark; --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e; }
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 0 auto; max-width: 900px; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  #version { font-weight: normal; opacity: .7; font-size: 14px; }
+  #state { font-size: 18px; font-weight: 600; }
+  .ok { color: var(--ok); } .degraded { color: var(--warn); } .failed, .down { color: var(--bad); }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+  td { padding: 4px 8px; border-bottom: 1px solid #8884; vertical-align: top; }
+  td:first-child { width: 40%; opacity: .8; }
+</style>
+</head>
+<body>
+<h1>wall-bridge <span id="version">v{{VERSION}}</span></h1>
+<div id="state">…</div>
+<table id="rows"></table>
+<script>
+const label = { ok: "Stena OK", degraded: "Stena beží, ale niečo nesedí", failed: "Stena nie je na mostíku" };
+function row(k, v) { return "<tr><td>" + k + "</td><td>" + v + "</td></tr>"; }
+async function tick() {
+  const st = document.getElementById("state");
+  try {
+    const r = await fetch("/api/status", { cache: "no-store" });
+    const s = await r.json();
+    st.className = s.state;
+    st.textContent = label[s.state] + (s.reasons.length ? " — " + s.reasons.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(", ") : "");
+    const p = s.pacing, d = s.display, snd = s.sender;
+    document.getElementById("rows").innerHTML =
+      row("Displej", d.target_acquired ? d.width + "×" + d.height + " @ " + d.hz.toFixed(3) + " Hz" : "nezískaný") +
+      row("Mimo desktopu", d.specialized ? "áno" : "nie") +
+      row("Zdroj (Spout)", snd.name + (snd.connected ? " — pripojený " + snd.width + "×" + snd.height : " — chýba")) +
+      row("Posledný nový obraz", snd.last_picture_age_ms === null ? "—" : snd.last_picture_age_ms + " ms") +
+      row("Nové / opakované (10 s)", p.new + " / " + p.repeats) +
+      row("Zmeškané vblanky (10 s)", p.missed_vblanks) +
+      row("Príchod p50 / p90", p.arrival_ms_p50.toFixed(1) + " / " + p.arrival_ms_p90.toFixed(1) + " ms") +
+      row("Surround", s.topology.matches ? "podľa definície" : "nezhoduje sa") +
+      row("Beží", s.uptime_s + " s") +
+      (s.warnings.length ? row("Upozornenia", s.warnings.join("<br>")) : "");
+  } catch (e) {
+    st.className = "down";
+    st.textContent = "Služba neodpovedá";
+  }
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

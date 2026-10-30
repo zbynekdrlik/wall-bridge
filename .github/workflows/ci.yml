@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pure crates build and test on Linux; Windows-only crates are checked in the windows job.
+  PURE_CRATES: -p wb-core -p wb-service -p wb-tray -p wb-topology
+  # Coverage floor applies to the pure logic crate; wb-service is mostly Windows glue.
+  COVERAGE_CRATES: -p wb-core
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --all --check
+
+  clippy-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy $PURE_CRATES --all-targets -- -D warnings
+
+  test-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test $PURE_CRATES
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with: { tool: cargo-llvm-cov }
+      - name: Line coverage vs floor
+        run: cargo llvm-cov $COVERAGE_CRATES --fail-under-lines "$(cat .github/coverage-floor)"
+
+  mutants:
+    needs: [test-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with: { tool: "cargo-mutants,cargo-nextest" }
+      - name: Diff-scoped mutation gate (pure crates)
+        run: |
+          git diff origin/main...HEAD -- crates/wb-core > pr.diff
+          if [ ! -s pr.diff ]; then echo "no wb-core changes vs main"; exit 0; fi
+          cargo mutants $COVERAGE_CRATES --in-diff pr.diff --baseline=skip --test-tool=nextest --jobs 2 -- --all-targets
+
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: dev version > main version
+        if: github.ref != 'refs/heads/main'
+        run: python3 scripts/check_version.py --base-ref origin/main
+
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release --workspace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wall-bridge-windows
+          path: target/release/*.exe
+
+  dashboard-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: cargo build -p wb-service --example dashboard_fixture
+      - name: Playwright (real browser on the real dashboard, fixed status)
+        working-directory: e2e
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          ../target/debug/examples/dashboard_fixture 18930 ok &
+          ../target/debug/examples/dashboard_fixture 18931 degraded &
+          sleep 2
+          npx playwright test
+          WB_URL=http://127.0.0.1:18931 WB_EXPECT_STATE="Stena beží, ale niečo nesedí — sender_lost" npx playwright test
+
+  installer-tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pester (Windows PowerShell 5.1, as on SNV)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module Pester -MinimumVersion 5.0
+          $r = Invoke-Pester -Path installer/tests -PassThru -Output Detailed
+          if ($r.FailedCount -gt 0 -or $r.PassedCount -eq 0) { exit 1 }
+
+  all-pass:
+    if: always()
+    needs: [fmt, clippy-linux, test-linux, coverage, mutants, version, windows-build, installer-tests, dashboard-e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job green
+        run: |
+          echo '${{ toJSON(needs) }}' | python3 -c "import json,sys; n=json.load(sys.stdin); bad=[k for k,v in n.items() if v['result']!='success']; print('failed:',bad); sys.exit(1 if bad else 0)"
+
+  release:
+    needs: [all-pass]
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p wb-service -p wb-tray
+      - name: Bundle (wall-bridge.exe + installer + VERSION + SHA256SUMS)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = (& target/release/wall-bridge.exe --version).Trim()
+          "VERSION=$v" >> $env:GITHUB_ENV
+          $d = "dist/wall-bridge-$v"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item target/release/wall-bridge.exe, target/release/wall-bridge-tray.exe $d
+          Copy-Item installer/install.ps1, installer/WallBridge.Install.psm1, installer/autoupdate.ps1, installer/WallBridge.Update.psm1 $d
+          Copy-Item installer/tools "$d/tools" -Recurse
+          Set-Content "$d/VERSION" $v -NoNewline
+          Compress-Archive -Path "$d/*" -DestinationPath "dist/wall-bridge-$v.zip"
+          $h = (Get-FileHash "dist/wall-bridge-$v.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content dist/SHA256SUMS "$h  wall-bridge-$v.zip"
+      - name: Publish dev-latest (dev) or v<version> (main)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = @("dist/wall-bridge-$env:VERSION.zip", 'dist/SHA256SUMS')
+          if ('${{ github.ref }}' -eq 'refs/heads/main') {
+            gh release create "v$env:VERSION" @assets --target '${{ github.sha }}' --title "wall-bridge $env:VERSION" --notes "Stable release $env:VERSION"
+          } else {
+            gh release delete dev-latest --cleanup-tag --yes 2>$null
+            $global:LASTEXITCODE = 0
+            gh release create dev-latest @assets --target '${{ github.sha }}' --prerelease --title "wall-bridge $env:VERSION (dev)" --notes "Dev build ${{ github.sha }}"
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
