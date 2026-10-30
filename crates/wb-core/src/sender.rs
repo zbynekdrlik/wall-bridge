@@ -9,6 +9,8 @@ use serde::Serialize;
 /// Re-open a listed sender after this long without a new picture (a dead texture behind a
 /// live name). Harmless for a static scene: the last picture stays on the wall.
 pub const STALL_REOPEN_MS: u64 = 10_000;
+/// Longest gap between stall re-opens of the same handle.
+pub const STALL_REOPEN_MAX_MS: u64 = 0;
 
 /// What the Windows side read for the sender at one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
