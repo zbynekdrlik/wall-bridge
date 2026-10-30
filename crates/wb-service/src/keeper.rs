@@ -18,6 +18,16 @@ const SETTLE: Duration = Duration::from_secs(3);
 /// Wait after the Settings toggle before reading the specialization again.
 const SPECIALIZE_SETTLE: Duration = Duration::from_secs(5);
 
+/// A child process without a console window: the engine is a GUI-subsystem exe, so a console
+/// child would pop a new window on the operator's desktop.
+fn hidden(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut c = std::process::Command::new(program);
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -27,7 +37,7 @@ fn now_ms() -> u64 {
 
 /// Local time as `yyyy-MM-ddTHH:mm:ss` (for PowerShell's StartTime comparison).
 fn local_now() -> String {
-    std::process::Command::new("powershell.exe")
+    hidden("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -40,7 +50,7 @@ fn local_now() -> String {
 }
 
 fn os_build() -> Option<u32> {
-    let out = std::process::Command::new("reg")
+    let out = hidden("reg")
         .args([
             "query",
             r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
@@ -83,7 +93,7 @@ fn is_specialized(monitor: &str) -> bool {
 /// The proven Settings toggle (`tools\spec_toggle.ps1`, UIA on "Remove display from desktop").
 fn specialize(script: &PathBuf, settings_name: &str) -> Result<(), String> {
     let started = local_now();
-    let out = std::process::Command::new("powershell.exe")
+    let out = hidden("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -106,7 +116,7 @@ fn specialize(script: &PathBuf, settings_name: &str) -> Result<(), String> {
     let close = format!(
         "Get-Process SystemSettings -ErrorAction SilentlyContinue | Where-Object {{ $_.StartTime -ge [datetime]'{started}' }} | Stop-Process -Force"
     );
-    let _ = std::process::Command::new("powershell.exe")
+    let _ = hidden("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", &close])
         .output();
     if out.status.success() {
