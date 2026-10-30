@@ -129,6 +129,19 @@ function Register-UpdateTask([string]$AppDir, [string]$Root, [string]$User) {
         -Trigger @($hourly, $boot) -Principal $principal -Settings $settings -Force | Out-Null
 }
 
+# Runs the install steps after Stop-Engines. When one fails, the engine and the tray that were
+# stopped are started again (the watchdog restarts only the engine), then the error goes on.
+function Invoke-WithEngineRestore([string]$Root, [scriptblock]$Action) {
+    try {
+        & $Action
+    } catch {
+        Write-InstallLog $Root "install failed: $($_.Exception.Message); starting the engine and the tray again"
+        Start-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
+        Start-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:TrayTask -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
 # wall-bridge.exe is a GUI-subsystem exe: PowerShell's '& exe --version' closes the pipe before
 # it prints (os error 232), so its stdout goes to a file.
 function Get-ExeVersion([string]$Exe) {
@@ -164,6 +177,6 @@ function Stop-Engines([string]$Root, [int]$WaitS = 15) {
     }
 }
 
-Export-ModuleMember -Function Get-ExeVersion, Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
+Export-ModuleMember -Function Get-ExeVersion, Invoke-WithEngineRestore, Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
     Register-EngineTask, Register-WatchdogTask, Register-TrayTask, Register-UpdateTask, Stop-Engines, `
     Write-InstallLog
