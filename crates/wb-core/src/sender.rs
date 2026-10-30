@@ -65,6 +65,12 @@ impl SenderWatch {
         }
     }
 
+    /// A new picture arrived (called by the engine for every one, between checks).
+    pub fn picture(&mut self, now_ms: u64) {
+        self.last_picture_ms = Some(now_ms);
+        self.stall_since_ms = Some(now_ms);
+    }
+
     /// The engine could not open the handle or a probe failed: drop it, so the next check
     /// opens the sender again.
     pub fn forget(&mut self) {

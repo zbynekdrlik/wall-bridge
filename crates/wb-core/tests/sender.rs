@@ -134,3 +134,13 @@ fn stalled_sender_is_reopened_periodically() {
     assert_eq!(w.tick(30_000, seen(1), false), SenderAction::Keep);
     assert!(w.state(30_000).connected);
 }
+
+#[test]
+fn picture_age_counts_from_the_picture_not_the_check() {
+    // Seen on the SNV dashboard: "last new picture 496 ms" at 30 pictures / s, because the age
+    // only moved at the 500 ms sender check.
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), false);
+    w.picture(480);
+    assert_eq!(w.state(500).last_picture_age_ms, Some(20));
+}
