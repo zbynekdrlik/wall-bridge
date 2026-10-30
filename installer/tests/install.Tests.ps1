@@ -116,3 +116,26 @@ Describe 'Stop-Engines' {
         Get-Content (Join-Path $root 'logs\install.log') -Raw | Should -Match "pid $gonePid already exited"
     }
 }
+
+Describe 'Stop-Engines waits' {
+    BeforeAll {
+        $root = Join-Path $TestDrive 'wait'
+        # Stop-Process returns before the process is gone; a reinstall of the same version then
+        # failed on SNV 30.10.: "Copy-Item : The process cannot access the file ...\app\0.2.6\
+        # wall-bridge.exe because it is being used by another process".
+        $script:slow = Start-Process -FilePath 'ping.exe' -ArgumentList '-n 60 127.0.0.1' -PassThru -WindowStyle Hidden
+        $slowPid = $script:slow.Id
+        Mock -ModuleName WallBridge.Install Stop-ScheduledTask {}
+        Mock -ModuleName WallBridge.Install Get-Process { [pscustomobject]@{ ProcessName = 'wall-bridge'; Id = $slowPid } } -ParameterFilter { $Name }
+    }
+    AfterAll { Stop-Process -Id $script:slow.Id -Force -ErrorAction SilentlyContinue }
+    It 'fails when a stopped process does not exit' {
+        # Stop-Process that has not taken effect yet: the process is still there.
+        Mock -ModuleName WallBridge.Install Stop-Process {}
+        { Stop-Engines -Root $root -WaitS 2 } | Should -Throw "*pid $($script:slow.Id) did not exit*"
+    }
+    It 'returns only after the process is gone' {
+        Stop-Engines -Root $root -WaitS 15
+        $script:slow.HasExited | Should -BeTrue
+    }
+}
