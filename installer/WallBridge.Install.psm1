@@ -129,6 +129,19 @@ function Register-UpdateTask([string]$AppDir, [string]$Root, [string]$User) {
         -Trigger @($hourly, $boot) -Principal $principal -Settings $settings -Force | Out-Null
 }
 
+# Runs the install steps after Stop-Engines. When one fails, the engine and the tray that were
+# stopped are started again (the watchdog restarts only the engine), then the error goes on.
+function Invoke-WithEngineRestore([string]$Root, [scriptblock]$Action) {
+    try {
+        & $Action
+    } catch {
+        Write-InstallLog $Root "install failed: $($_.Exception.Message); starting the engine and the tray again"
+        Start-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
+        Start-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:TrayTask -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
 # wall-bridge.exe is a GUI-subsystem exe: PowerShell's '& exe --version' closes the pipe before
 # it prints (os error 232), so its stdout goes to a file.
 function Get-ExeVersion([string]$Exe) {
@@ -144,7 +157,7 @@ function Get-ExeVersion([string]$Exe) {
     $v
 }
 
-function Stop-Engines([string]$Root) {
+function Stop-Engines([string]$Root, [int]$WaitS = 15) {
     Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
     foreach ($p in Get-Process -Name 'wall-bridge', 'wall-bridge-tray', 'wb2' -ErrorAction SilentlyContinue) {
         Write-InstallLog $Root "stopping $($p.ProcessName) pid $($p.Id)"
@@ -155,9 +168,15 @@ function Stop-Engines([string]$Root) {
             if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) { throw }
             Write-InstallLog $Root "pid $($p.Id) already exited"
         }
+        # Stop-Process returns before the process is gone; its exe stays locked until then.
+        $deadline = (Get-Date).AddSeconds($WaitS)
+        while ((Get-Process -Id $p.Id -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) { throw "pid $($p.Id) did not exit within $WaitS s" }
     }
 }
 
-Export-ModuleMember -Function Get-ExeVersion, Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
+Export-ModuleMember -Function Get-ExeVersion, Invoke-WithEngineRestore, Get-PrunableVersions, Get-DefaultConfig, Install-AppFiles, `
     Register-EngineTask, Register-WatchdogTask, Register-TrayTask, Register-UpdateTask, Stop-Engines, `
     Write-InstallLog

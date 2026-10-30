@@ -7,8 +7,12 @@
 use serde::Serialize;
 
 /// Re-open a listed sender after this long without a new picture (a dead texture behind a
-/// live name). Harmless for a static scene: the last picture stays on the wall.
+/// live name), then back off (see [`STALL_REOPEN_MAX_MS`]). Harmless for a static scene: the
+/// last picture stays on the wall.
 pub const STALL_REOPEN_MS: u64 = 10_000;
+/// Each stall re-open of the same handle doubles the gap to the next, up to this. Arena
+/// publishes no Spout frame counter (SNV 30.10.2026), so a static scene looks like a stall.
+pub const STALL_REOPEN_MAX_MS: u64 = 300_000;
 
 /// What the Windows side read for the sender at one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +55,8 @@ pub struct SenderWatch {
     last_picture_ms: Option<u64>,
     /// Start of the current stall clock (last new picture or last stall re-open).
     stall_since_ms: Option<u64>,
+    /// Gap until the next stall re-open.
+    stall_gap_ms: u64,
 }
 
 impl SenderWatch {
@@ -62,13 +68,19 @@ impl SenderWatch {
             size: (0, 0),
             last_picture_ms: None,
             stall_since_ms: None,
+            stall_gap_ms: STALL_REOPEN_MS,
         }
     }
 
     /// A new picture arrived (called by the engine for every one, between checks).
     pub fn picture(&mut self, now_ms: u64) {
         self.last_picture_ms = Some(now_ms);
+        self.restart_stall_clock(now_ms);
+    }
+
+    fn restart_stall_clock(&mut self, now_ms: u64) {
         self.stall_since_ms = Some(now_ms);
+        self.stall_gap_ms = STALL_REOPEN_MS;
     }
 
     /// The engine could not open the handle or a probe failed: drop it, so the next check
@@ -87,8 +99,7 @@ impl SenderWatch {
         new_picture: bool,
     ) -> SenderAction {
         if new_picture {
-            self.last_picture_ms = Some(now_ms);
-            self.stall_since_ms = Some(now_ms);
+            self.picture(now_ms);
         }
         match seen {
             Some(s) if s.listed => {
@@ -97,18 +108,19 @@ impl SenderWatch {
                 match self.open {
                     None => {
                         self.open = Some(s.handle);
-                        self.stall_since_ms = Some(now_ms);
+                        self.restart_stall_clock(now_ms);
                         SenderAction::Open(s.handle)
                     }
                     Some(h) if h != s.handle => {
                         self.open = Some(s.handle);
-                        self.stall_since_ms = Some(now_ms);
+                        self.restart_stall_clock(now_ms);
                         SenderAction::Reopen(s.handle)
                     }
                     Some(h) => {
                         let since = self.stall_since_ms.unwrap_or(now_ms);
-                        if now_ms.saturating_sub(since) >= STALL_REOPEN_MS {
+                        if now_ms.saturating_sub(since) >= self.stall_gap_ms {
                             self.stall_since_ms = Some(now_ms);
+                            self.stall_gap_ms = (self.stall_gap_ms * 2).min(STALL_REOPEN_MAX_MS);
                             SenderAction::Reopen(h)
                         } else {
                             SenderAction::Keep

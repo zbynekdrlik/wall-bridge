@@ -1,4 +1,4 @@
-use wb_core::sender::{SenderAction, SenderSeen, SenderWatch};
+use wb_core::sender::{SenderAction, SenderSeen, SenderWatch, STALL_REOPEN_MAX_MS};
 
 fn seen(handle: u32) -> Option<SenderSeen> {
     Some(SenderSeen {
@@ -127,12 +127,13 @@ fn stalled_sender_is_reopened_periodically() {
     w.tick(0, seen(1), true);
     assert_eq!(w.tick(9_000, seen(1), false), SenderAction::Keep);
     assert_eq!(w.tick(10_000, seen(1), false), SenderAction::Reopen(1));
-    assert_eq!(w.tick(15_000, seen(1), false), SenderAction::Keep);
-    assert_eq!(w.tick(20_000, seen(1), false), SenderAction::Reopen(1));
-    // A new picture resets the stall clock.
-    assert_eq!(w.tick(21_000, seen(1), true), SenderAction::Keep);
-    assert_eq!(w.tick(30_000, seen(1), false), SenderAction::Keep);
-    assert!(w.state(30_000).connected);
+    assert_eq!(w.tick(20_000, seen(1), false), SenderAction::Keep);
+    assert_eq!(w.tick(30_000, seen(1), false), SenderAction::Reopen(1));
+    // A new picture resets the stall clock and the back-off.
+    assert_eq!(w.tick(31_000, seen(1), true), SenderAction::Keep);
+    assert_eq!(w.tick(40_000, seen(1), false), SenderAction::Keep);
+    assert_eq!(w.tick(41_000, seen(1), false), SenderAction::Reopen(1));
+    assert!(w.state(41_000).connected);
 }
 
 #[test]
@@ -143,4 +144,39 @@ fn picture_age_counts_from_the_picture_not_the_check() {
     w.tick(0, seen(1), false);
     w.picture(480);
     assert_eq!(w.state(500).last_picture_age_ms, Some(20));
+}
+
+/// Times of the stall re-opens of a static scene, checked every 500 ms up to `until`.
+fn stall_reopens(w: &mut SenderWatch, from: u64, until: u64) -> Vec<u64> {
+    (from..=until)
+        .step_by(500)
+        .filter(|&t| w.tick(t, seen(1), false) == SenderAction::Reopen(1))
+        .collect()
+}
+
+#[test]
+fn static_scene_reopens_with_growing_gaps() {
+    // Arena publishes no Spout frame counter (no `<name>_Count_Semaphore`, SNV 30.10.2026), so a
+    // static scene cannot be told from a dead texture. The safety re-open backs off from 10 s
+    // to at most 5 min instead of firing every 10 s.
+    assert_eq!(STALL_REOPEN_MAX_MS, 300_000);
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), true);
+    assert_eq!(
+        stall_reopens(&mut w, 500, 1_000_000),
+        vec![10_000, 30_000, 70_000, 150_000, 310_000, 610_000, 910_000]
+    );
+}
+
+#[test]
+fn a_new_handle_resets_the_back_off() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), true);
+    assert_eq!(
+        stall_reopens(&mut w, 500, 70_000),
+        vec![10_000, 30_000, 70_000]
+    );
+    assert_eq!(w.tick(70_500, seen(2), false), SenderAction::Reopen(2));
+    w.tick(71_000, seen(1), false);
+    assert_eq!(stall_reopens(&mut w, 71_500, 100_500), vec![81_000]);
 }

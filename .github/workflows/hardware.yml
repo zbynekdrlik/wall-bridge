@@ -1,0 +1,16 @@
+# Destructive tests on the real SNV wall, started by hand (Actions -> hardware -> Run workflow).
+# The wall shows the Windows desktop for about a minute.
+name: hardware
+on:
+  workflow_dispatch:
+jobs:
+  arena-stall:
+    runs-on: [self-hosted, snv, wall-bridge]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: A/B/A Arena stall test (wall back on the desktop, keeper restores it)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./e2e/snv/stall-test.ps1

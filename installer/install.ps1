@@ -19,15 +19,19 @@ if (-not (Test-Path $exeSrc)) { throw "no wall-bridge.exe in $Source" }
 $version = Get-ExeVersion $exeSrc
 Write-InstallLog $Root "installing $version from $Source"
 
-Stop-Engines $Root
-$dir = Install-AppFiles -Source $Source -Root $Root -Version $version
-$exe = Join-Path $dir 'wall-bridge.exe'
-Register-EngineTask -Exe $exe -User $User
-Register-WatchdogTask -Root $Root
+$dir = Invoke-WithEngineRestore -Root $Root -Action {
+    Stop-Engines $Root
+    $dir = Install-AppFiles -Source $Source -Root $Root -Version $version
+    $exe = Join-Path $dir 'wall-bridge.exe'
+    Register-EngineTask -Exe $exe -User $User
+    Register-WatchdogTask -Root $Root
+    $tray = Join-Path $dir 'wall-bridge-tray.exe'
+    if (Test-Path $tray) { Register-TrayTask -Exe $tray -User $User }
+    if (Test-Path (Join-Path $dir 'autoupdate.ps1')) { Register-UpdateTask -AppDir $dir -Root $Root -User $User }
+    Write-InstallLog $Root "tasks registered for $exe (user $User)"
+    $dir
+}
 $tray = Join-Path $dir 'wall-bridge-tray.exe'
-if (Test-Path $tray) { Register-TrayTask -Exe $tray -User $User }
-if (Test-Path (Join-Path $dir 'autoupdate.ps1')) { Register-UpdateTask -AppDir $dir -Root $Root -User $User }
-Write-InstallLog $Root "tasks registered for $exe (user $User)"
 
 if (-not $NoStart) {
     Start-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine'
