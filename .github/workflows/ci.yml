@@ -156,6 +156,9 @@ jobs:
           Copy-Item target/release/wall-bridge.exe, target/release/wall-bridge-tray.exe $d
           Copy-Item installer/install.ps1, installer/WallBridge.Install.psm1, installer/autoupdate.ps1, installer/WallBridge.Update.psm1 $d
           Copy-Item installer/tools "$d/tools" -Recurse
+          foreach ($t in 'spec_toggle.ps1', 'diag/displays.ps1', 'diag/grab_ts.py', 'diag/lat_pair.py') {
+            if (-not (Test-Path "$d/tools/$t")) { throw "bundle is missing tools/$t" }
+          }
           Set-Content "$d/VERSION" $v -NoNewline
           Compress-Archive -Path "$d/*" -DestinationPath "dist/wall-bridge-$v.zip"
           $h = (Get-FileHash "dist/wall-bridge-$v.zip" -Algorithm SHA256).Hash.ToLower()
