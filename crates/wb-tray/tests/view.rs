@@ -35,6 +35,11 @@ fn failed_is_red() {
     )));
     assert_eq!(v.light, Light::Red);
     assert!(v.line.ends_with("stena nie je získaná"));
+    let v = view(Some(&st(
+        "failed",
+        serde_json::json!(["display_on_desktop"]),
+    )));
+    assert!(v.line.ends_with("stena je na ploche Windows"), "{}", v.line);
 }
 
 #[test]

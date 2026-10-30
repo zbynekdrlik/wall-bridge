@@ -4,11 +4,13 @@
 
 use crate::api::Shared;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 use wb_core::config::{drift_warnings, Config};
 use wb_core::status::specialized_from_targets;
-use wb_core::topology::{decide, Grid, KeeperAction, KeeperHistory, Step, WallDef};
+use wb_core::topology::{decide, span_live, Grid, KeeperAction, KeeperHistory, Step, WallDef};
 use wb_topology::{Nvapi, RawGrid, PINNED};
 
 /// Let the driver settle after each grid change (the reference scripts wait 3 s).
@@ -170,7 +172,8 @@ fn restore(
     true
 }
 
-pub fn run(cfg: Config, status: Shared) {
+/// `reacquire`: set after a re-specialization, so the engine drops its stale target.
+pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) {
     let def = cfg.topology.wall_def();
     let pinned = RawGrid::from_bytes(PINNED).expect("pinned grid blob");
     let script = std::env::current_exe()
@@ -200,16 +203,19 @@ pub fn run(cfg: Config, status: Shared) {
         if let Err(e) = &read {
             warn!(err = %e, "topology read failed");
         }
+        let was = h.matches;
+        // Off the vblank path: this thread may list the Display.Core targets. The engine's own
+        // flag is stale: Windows can put the wall back on the desktop under a held target.
+        let specialized = is_specialized(&cfg.wall.monitor);
         let span_live = {
             let st = status.read().expect("status lock");
-            st.display.target_acquired
-                && st.display.specialized
-                && st.display.width == cfg.wall.width
-                && st.display.height == cfg.wall.height
+            span_live(
+                st.display.target_acquired,
+                specialized,
+                (st.display.width, st.display.height),
+                (cfg.wall.width, cfg.wall.height),
+            )
         };
-        let was = h.matches;
-        // Off the vblank path: this thread may list the Display.Core targets.
-        let specialized = is_specialized(&cfg.wall.monitor);
         let action = decide(&def, read.clone(), span_live, specialized, &mut h, now_ms());
         if was != h.matches {
             info!(matches = h.matches, span_live, unknown = h.unknown, grids = ?read, "topology changed");
@@ -232,6 +238,10 @@ pub fn run(cfg: Config, status: Shared) {
                     .map(|n| restore(n, &def, &steps, &cfg, &pinned, &script))
                     .unwrap_or(false);
                 h.restore_finished(now_ms(), ok);
+                if ok && steps.contains(&Step::Specialize) {
+                    info!("asking the engine to re-acquire the re-specialized wall");
+                    reacquire.store(true, Ordering::SeqCst);
+                }
                 if ok {
                     h.matches = true;
                     info!("surround layout restored");
@@ -255,6 +265,7 @@ pub fn run(cfg: Config, status: Shared) {
             ));
         }
         let mut st = status.write().expect("status lock");
+        st.display.specialized = specialized;
         st.topology.matches = h.matches;
         st.topology.last_restore_ms = h.last_restore_ms;
         st.topology.failures = h.failures(now_ms()) as u32;

@@ -6,6 +6,8 @@
 //! - the sender disappears → hold the last picture, status `degraded`.
 
 use crate::api::Shared;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 use wb_core::config::Config;
@@ -165,7 +167,8 @@ fn display_state(cfg: &Config, scanout: Option<&Scanout>) -> DisplayState {
 }
 
 /// Runs forever. Only a broken D3D device at startup returns an error.
-pub fn run(cfg: Config, status: Shared) -> Result<()> {
+/// `reacquire`: the keeper re-specialized the wall; drop the target and acquire it again.
+pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()> {
     unsafe {
         timeBeginPeriod(1);
         if SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST).is_err() {
@@ -260,6 +263,10 @@ pub fn run(cfg: Config, status: Shared) -> Result<()> {
                 .is_multiple_of(cfg.sender.check_every_vb.max(1))
             {
                 let t = Instant::now();
+                if reacquire.swap(false, Ordering::SeqCst) {
+                    warn!("the keeper re-specialized the wall, re-acquiring the display");
+                    break;
+                }
                 let seen = reader.seen();
                 match watch.tick(now_ms(), seen, new_since_check) {
                     SenderAction::Keep => {}
@@ -368,7 +375,11 @@ pub fn run(cfg: Config, status: Shared) -> Result<()> {
                     "window"
                 );
                 let mut st = status.write().expect("status lock");
-                st.display = display.clone();
+                // The keeper owns `specialized`: it reads the live target list.
+                st.display = DisplayState {
+                    specialized: st.display.specialized,
+                    ..display.clone()
+                };
                 st.sender = sender;
                 st.pacing = w;
                 st.uptime_s = started.elapsed().as_secs();
