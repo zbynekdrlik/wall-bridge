@@ -2154,7 +2154,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wb-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2163,7 +2163,7 @@ dependencies = [
 
 [[package]]
 name = "wb-scanout"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "tracing",
  "windows",
@@ -2171,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "wb-service"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "http-body-util",
@@ -2190,7 +2190,7 @@ dependencies = [
 
 [[package]]
 name = "wb-spout"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "wb-core",
  "windows",
@@ -2198,7 +2198,7 @@ dependencies = [
 
 [[package]]
 name = "wb-topology"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "tracing",
  "wb-core",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "wb-tray"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "arboard",
  "serde",
