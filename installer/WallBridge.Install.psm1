@@ -144,7 +144,7 @@ function Get-ExeVersion([string]$Exe) {
     $v
 }
 
-function Stop-Engines([string]$Root) {
+function Stop-Engines([string]$Root, [int]$WaitS = 15) {
     Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
     foreach ($p in Get-Process -Name 'wall-bridge', 'wall-bridge-tray', 'wb2' -ErrorAction SilentlyContinue) {
         Write-InstallLog $Root "stopping $($p.ProcessName) pid $($p.Id)"
@@ -155,6 +155,12 @@ function Stop-Engines([string]$Root) {
             if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) { throw }
             Write-InstallLog $Root "pid $($p.Id) already exited"
         }
+        # Stop-Process returns before the process is gone; its exe stays locked until then.
+        $deadline = (Get-Date).AddSeconds($WaitS)
+        while ((Get-Process -Id $p.Id -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) { throw "pid $($p.Id) did not exit within $WaitS s" }
     }
 }
 
