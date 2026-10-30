@@ -3,11 +3,11 @@ BeforeAll {
 }
 
 Describe 'Get-PrunableVersions' {
-    It 'keeps the current and the newest other version' {
-        $r = Get-PrunableVersions -Versions @('0.1.9', '0.2.0', '0.2.1', '0.10.0') -Current '0.10.0'
-        $r | Sort-Object | Should -Be @('0.1.9', '0.2.0')
+    It 'keeps the current and the previous version' {
+        $r = Get-PrunableVersions -Versions @('0.1.9', '0.2.0', '0.2.1', '0.10.0') -Current '0.10.0' -Previous '0.2.0'
+        $r | Sort-Object | Should -Be @('0.1.9', '0.2.1')
     }
-    It 'keeps a rollback even when current is older than the newest dir' {
+    It 'keeps the newest other version when there is no previous' {
         $r = Get-PrunableVersions -Versions @('0.2.0', '0.2.1', '0.2.2') -Current '0.2.1'
         $r | Should -Be @('0.2.0')
     }
@@ -35,6 +35,19 @@ Describe 'Install-AppFiles' {
         Set-Content (Join-Path $root 'config.toml') "[api]`nport = 9000"
         Install-AppFiles -Source $src -Root $root -Version '0.2.0' | Out-Null
         Get-Content (Join-Path $root 'config.toml') -Raw | Should -Match 'port = 9000'
+    }
+    It 'reinstalls from its own app folder (rollback)' {
+        # Review C1: rollback runs install.ps1 -Source app\<current> into the same Root.
+        Install-AppFiles -Source $src -Root $root -Version '0.2.0' | Out-Null
+        $own = Join-Path $root 'app\0.2.0'
+        { Install-AppFiles -Source $own -Root $root -Version '0.2.0' } | Should -Not -Throw
+        Test-Path (Join-Path $own 'wall-bridge.exe') | Should -BeTrue
+    }
+    It 'keeps the version it came from as the rollback' {
+        Install-AppFiles -Source $src -Root $root -Version '0.2.5' | Out-Null
+        Install-AppFiles -Source $src -Root $root -Version '0.2.1' | Out-Null
+        Install-AppFiles -Source $src -Root $root -Version '0.2.3' | Out-Null
+        (Get-ChildItem (Join-Path $root 'app') -Directory).Name | Sort-Object | Should -Be @('0.2.1', '0.2.3')
     }
     It 'writes a default config when missing' {
         Install-AppFiles -Source $src -Root $root -Version '0.2.0' | Out-Null

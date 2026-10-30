@@ -65,3 +65,17 @@ Describe 'killswitch_respected' {
         Get-Content (Join-Path $root 'logs\install.log') -Raw | Should -Match 'disabled by autoupdate.disabled'
     }
 }
+
+Describe 'Get-ApiPort' {
+    It 'reads [api] port from config.toml' {
+        $c = Join-Path $TestDrive 'c.toml'
+        Set-Content $c "[sender]`nname = `"x`"`n[api]`nport = 9123`n"
+        Get-ApiPort $c | Should -Be 9123
+    }
+    It 'defaults to 8930' {
+        Get-ApiPort (Join-Path $TestDrive 'missing.toml') | Should -Be 8930
+        $c = Join-Path $TestDrive 'd.toml'
+        Set-Content $c "# [api]`n# port = 1`n[pacing]`nport = 5`n"
+        Get-ApiPort $c | Should -Be 8930
+    }
+}
