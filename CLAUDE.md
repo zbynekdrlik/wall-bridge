@@ -47,5 +47,4 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
 - Event mode = hands off.
 
 ## Related projects
-- songplayer: SongPlayer's wall report must learn the bridge state, because the wall is no longer a desktop display.
 - Reach it through the peer channel (`peer_send`).
