@@ -133,7 +133,13 @@ function Stop-Engines([string]$Root) {
     Stop-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
     foreach ($p in Get-Process -Name 'wall-bridge', 'wall-bridge-tray', 'wb2' -ErrorAction SilentlyContinue) {
         Write-InstallLog $Root "stopping $($p.ProcessName) pid $($p.Id)"
-        Stop-Process -Id $p.Id -Force
+        try {
+            Stop-Process -Id $p.Id -Force -ErrorAction Stop
+        } catch {
+            # It may exit on its own meanwhile (the single-instance exit of a second engine).
+            if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) { throw }
+            Write-InstallLog $Root "pid $($p.Id) already exited"
+        }
     }
 }
 
