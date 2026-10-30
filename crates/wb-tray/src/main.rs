@@ -18,19 +18,29 @@ fn main() {
 mod shell {
     use std::sync::mpsc;
     use std::time::Duration;
+    use std::time::Instant;
     use tracing::{error, info, warn};
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+    use wb_tray::promote::{to_promote, IconEntry};
     use wb_tray::view::{icon_rgba, view, Light, Status, View};
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::*;
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
+    use winreg::RegKey;
 
     const POLL_EVERY: Duration = Duration::from_secs(5);
     const POLL_TIMEOUT: Duration = Duration::from_secs(2);
     const LOCAL_STATUS: &str = "http://127.0.0.1:8930/api/status";
+    /// The taskbar may not be ready yet right after logon (SNV 30.10.2026).
+    const ICON_RETRY: Duration = Duration::from_secs(5);
+    /// Explorer adds the icon's settings entry some time after the icon appears, and the user
+    /// can hide it again: check this often.
+    const PROMOTE_EVERY: Duration = Duration::from_secs(10);
+    const ICON_SETTINGS: &str = r"Control Panel\NotifyIconSettings";
 
     /// The LAN URL people open from other machines (the dashboard).
     fn lan_url() -> String {
@@ -53,6 +63,45 @@ mod shell {
             Err(e) => {
                 warn!(err = %e, "status request failed");
                 None
+            }
+        }
+    }
+
+    fn icon_entries() -> std::io::Result<Vec<IconEntry>> {
+        let root =
+            RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(ICON_SETTINGS, KEY_READ)?;
+        Ok(root
+            .enum_keys()
+            .filter_map(Result::ok)
+            .filter_map(|key| {
+                let k = root.open_subkey_with_flags(&key, KEY_READ).ok()?;
+                let path: String = k.get_value("ExecutablePath").ok()?;
+                let promoted: Option<u32> = k.get_value("IsPromoted").ok();
+                Some(IconEntry {
+                    key,
+                    path,
+                    promoted,
+                })
+            })
+            .collect())
+    }
+
+    /// Move this exe's icon out of the hidden overflow.
+    fn keep_visible(exe: &str) {
+        let entries = match icon_entries() {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(err = %e, "notify icon settings unreadable");
+                return;
+            }
+        };
+        for key in to_promote(&entries, exe) {
+            let set = RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey_with_flags(format!(r"{ICON_SETTINGS}\{key}"), KEY_SET_VALUE)
+                .and_then(|k| k.set_value("IsPromoted", &1u32));
+            match set {
+                Ok(()) => info!(key, exe, "tray icon promoted to the taskbar"),
+                Err(e) => error!(key, err = %e, "tray icon promotion failed"),
             }
         }
     }
@@ -122,18 +171,25 @@ mod shell {
             error!(err = ?e, "menu");
             return;
         }
-        let tray: TrayIcon = match TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip("wall-bridge")
-            .with_icon(icon(Light::Grey))
-            .build()
-        {
-            Ok(t) => t,
-            Err(e) => {
-                error!(err = ?e, "tray icon");
-                return;
+        let tray: TrayIcon = loop {
+            match TrayIconBuilder::new()
+                .with_menu(Box::new(menu.clone()))
+                .with_tooltip("wall-bridge")
+                .with_icon(icon(Light::Grey))
+                .build()
+            {
+                Ok(t) => break t,
+                Err(e) => {
+                    warn!(err = ?e, retry_s = ICON_RETRY.as_secs(), "tray icon not created yet, retrying");
+                    std::thread::sleep(ICON_RETRY);
+                }
             }
         };
+        info!("tray icon created");
+        let exe = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let mut promoted_at: Option<Instant> = None;
 
         // Status polling off the UI thread.
         let (tx, rx) = mpsc::channel::<Option<Status>>();
@@ -166,6 +222,10 @@ mod shell {
                     info!("exit from the menu (tray only, the engine keeps running)");
                     return;
                 }
+            }
+            if promoted_at.is_none_or(|t| t.elapsed() >= PROMOTE_EVERY) {
+                keep_visible(&exe);
+                promoted_at = Some(Instant::now());
             }
             while let Ok(st) = rx.try_recv() {
                 let v = view(st.as_ref());

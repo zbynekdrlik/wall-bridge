@@ -14,7 +14,11 @@ const EXE: &str = r"C:\ProgramData\WallBridge\app\0.2.4\wall-bridge-tray.exe";
 fn a_new_version_hidden_by_windows_is_promoted() {
     // What SNV showed on 30.10.: one entry per installed version, IsPromoted unset.
     let entries = vec![
-        e("5731", r"C:\ProgramData\WallBridge\app\0.2.3\wall-bridge-tray.exe", Some(1)),
+        e(
+            "5731",
+            r"C:\ProgramData\WallBridge\app\0.2.3\wall-bridge-tray.exe",
+            Some(1),
+        ),
         e("1755", EXE, None),
         e("9000", r"C:\Program Files\Other\other.exe", None),
     ];
