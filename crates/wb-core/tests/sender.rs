@@ -101,3 +101,36 @@ fn no_picture_yet_has_no_age() {
     assert_eq!(w.state(100).last_picture_age_ms, None);
 }
 
+#[test]
+fn forget_after_failed_open_opens_again() {
+    // C2: the engine could not open the handle (or a probe failed): the next check must
+    // open the same handle again, not keep the closed one.
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    assert_eq!(
+        w.tick(0, seen(0x4000_2c42), false),
+        SenderAction::Open(0x4000_2c42)
+    );
+    w.forget();
+    assert!(!w.state(0).connected);
+    assert_eq!(
+        w.tick(500, seen(0x4000_2c42), false),
+        SenderAction::Open(0x4000_2c42)
+    );
+    assert!(w.state(500).connected);
+}
+
+#[test]
+fn stalled_sender_is_reopened_periodically() {
+    // Spec: re-open when no new pictures come for a while although the sender is listed.
+    // A static scene is harmless to re-open: the last picture stays on the wall.
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), true);
+    assert_eq!(w.tick(9_000, seen(1), false), SenderAction::Keep);
+    assert_eq!(w.tick(10_000, seen(1), false), SenderAction::Reopen(1));
+    assert_eq!(w.tick(15_000, seen(1), false), SenderAction::Keep);
+    assert_eq!(w.tick(20_000, seen(1), false), SenderAction::Reopen(1));
+    // A new picture resets the stall clock.
+    assert_eq!(w.tick(21_000, seen(1), true), SenderAction::Keep);
+    assert_eq!(w.tick(30_000, seen(1), false), SenderAction::Keep);
+    assert!(w.state(30_000).connected);
+}
