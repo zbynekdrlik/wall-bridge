@@ -82,6 +82,11 @@ impl RawGrid {
     pub fn from_grid(g: &Grid, template: &RawGrid) -> RawGrid {
         let mut r = *template;
         r.version = GRID_VER;
+        // Surround flags belong to the template's topology only: a 1x1 grid carrying the 1x3
+        // wall's flags is rejected by SetDisplayGrids (-5, measured on SNV).
+        if (g.rows, g.cols) != (template.rows, template.columns) {
+            r.flags = 0;
+        }
         r.rows = g.rows;
         r.columns = g.cols;
         r.display_count = g.ids.len() as u32;
