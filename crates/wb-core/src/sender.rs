@@ -57,6 +57,8 @@ pub struct SenderWatch {
     stall_since_ms: Option<u64>,
     /// Gap until the next stall re-open.
     stall_gap_ms: u64,
+    /// A stall re-open resets the reader's samples, so its next picture is not a new one.
+    resample_pending: bool,
 }
 
 impl SenderWatch {
@@ -69,11 +71,16 @@ impl SenderWatch {
             last_picture_ms: None,
             stall_since_ms: None,
             stall_gap_ms: STALL_REOPEN_MS,
+            resample_pending: false,
         }
     }
 
-    /// A new picture arrived (called by the engine for every one, between checks).
+    /// A new picture arrived (through `tick`, at most once per check).
     pub fn picture(&mut self, now_ms: u64) {
+        if self.resample_pending {
+            self.resample_pending = false;
+            return;
+        }
         self.last_picture_ms = Some(now_ms);
         self.restart_stall_clock(now_ms);
     }
@@ -81,6 +88,7 @@ impl SenderWatch {
     fn restart_stall_clock(&mut self, now_ms: u64) {
         self.stall_since_ms = Some(now_ms);
         self.stall_gap_ms = STALL_REOPEN_MS;
+        self.resample_pending = false;
     }
 
     /// The engine could not open the handle or a probe failed: drop it, so the next check
@@ -120,6 +128,7 @@ impl SenderWatch {
                         let since = self.stall_since_ms.unwrap_or(now_ms);
                         if now_ms.saturating_sub(since) >= self.stall_gap_ms {
                             self.stall_since_ms = Some(now_ms);
+                            self.resample_pending = true;
                             self.stall_gap_ms = (self.stall_gap_ms * 2).min(STALL_REOPEN_MAX_MS);
                             SenderAction::Reopen(h)
                         } else {

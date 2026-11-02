@@ -41,6 +41,7 @@ paths:
 - **`wall-bridge.exe` is a GUI-subsystem exe:** `& exe --version` from PowerShell loses the output (os error 232). Use `Get-ExeVersion` / `Start-Process -RedirectStandardOutput`.
 - **Tray log** is held open by the tray: read it with a shared `FileStream` (`[IO.File]::Open(p,'Open','Read','ReadWrite')`), not `Get-Content`.
 - **Spout frame counter:** Arena publishes none (no `<sender>_Count_Semaphore`; only `<sender>_SpoutAccessMutex` and the mapping, probed in session 1 on 30.10.). Static and frozen pictures cannot be told apart.
+- **A re-open reads as one new picture:** the reader resets its samples, so the first probe after a stall re-open says `Probe::New`. It must not count as Arena moving (back-off bug, found live 2.11.).
 - **Arrival phase:** Arena's picture arrival phase wanders across the whole wall vblank interval within a minute (30.10.). The 2-vblank show delay is the margin against judder; 1 vblank is not safe.
 - **Stop-Process is asynchronous:** the exe stays locked for a moment after `Stop-Process -Force`; wait for the pid to go before copying over it (same-version reinstall failed 30.10.).
 - **Grabber latency:** the grabber never sees the wall, only Arena's direct output or a test bridge aimed at the grabber itself. `lat_pair.py` needs a static scene with text cuts: on moving video every picture is an arrival and the pairing is meaningless. The 29.10. figure (+2–3 ms) holds while `SHOW_DELAY_VB` stays 2.
