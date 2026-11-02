@@ -231,7 +231,6 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
         let mut probe_us_max = 0u64;
         let mut check_us_max = 0u64;
         let mut loop_end_us_max = 0u64;
-        let mut new_since_check = false;
         let mut last_vblank: Option<Instant> = None;
         let mut window_start = Instant::now();
 
@@ -268,7 +267,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     break;
                 }
                 let seen = reader.seen();
-                match watch.tick(now_ms(), seen, new_since_check) {
+                match watch.tick(now_ms(), seen) {
                     SenderAction::Keep => {}
                     SenderAction::Open(h) | SenderAction::Reopen(h) => {
                         let what = if reader.open_handle().is_some() {
@@ -302,7 +301,6 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                         }
                     }
                 }
-                new_since_check = false;
                 check_us_max = check_us_max.max(t.elapsed().as_micros() as u64);
             }
 
@@ -325,7 +323,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                         if let Some(us) = arrived_off_us {
                             arrivals.push(us);
                         }
-                        new_since_check = true;
+                        watch.picture(now_ms());
                         break;
                     }
                     Ok(Probe::Same) => {

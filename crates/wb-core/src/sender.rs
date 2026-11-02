@@ -75,7 +75,7 @@ impl SenderWatch {
         }
     }
 
-    /// A new picture arrived (through `tick`, at most once per check).
+    /// A new picture arrived (called by the engine for every one, between checks).
     pub fn picture(&mut self, now_ms: u64) {
         if self.resample_pending {
             self.resample_pending = false;
@@ -99,16 +99,7 @@ impl SenderWatch {
     }
 
     /// One check. `seen` is `None` when the sender's mapping cannot be read.
-    /// `new_picture` is true when a new picture arrived since the last check.
-    pub fn tick(
-        &mut self,
-        now_ms: u64,
-        seen: Option<SenderSeen>,
-        new_picture: bool,
-    ) -> SenderAction {
-        if new_picture {
-            self.picture(now_ms);
-        }
+    pub fn tick(&mut self, now_ms: u64, seen: Option<SenderSeen>) -> SenderAction {
         match seen {
             Some(s) if s.listed => {
                 self.connected = true;

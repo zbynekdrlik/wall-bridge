@@ -13,7 +13,7 @@ fn seen(handle: u32) -> Option<SenderSeen> {
 fn first_sight_opens() {
     let mut w = SenderWatch::new("Arena - Screen 2");
     assert_eq!(
-        w.tick(0, seen(0x4000_2c42), false),
+        w.tick(0, seen(0x4000_2c42)),
         SenderAction::Open(0x4000_2c42)
     );
     assert!(w.state(0).connected);
@@ -22,10 +22,12 @@ fn first_sight_opens() {
 #[test]
 fn reopen_on_handle_change() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(0x4000_2c42), true);
-    assert_eq!(w.tick(500, seen(0x4000_2c42), true), SenderAction::Keep);
+    w.picture(0);
+    w.tick(0, seen(0x4000_2c42));
+    w.picture(500);
+    assert_eq!(w.tick(500, seen(0x4000_2c42)), SenderAction::Keep);
     assert_eq!(
-        w.tick(1000, seen(0x4000_3000), false),
+        w.tick(1000, seen(0x4000_3000)),
         SenderAction::Reopen(0x4000_3000)
     );
 }
@@ -33,14 +35,15 @@ fn reopen_on_handle_change() {
 #[test]
 fn hold_while_missing() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(0x4000_2c42), true);
-    assert_eq!(w.tick(500, None, false), SenderAction::Hold);
+    w.picture(0);
+    w.tick(0, seen(0x4000_2c42));
+    assert_eq!(w.tick(500, None), SenderAction::Hold);
     let s = w.state(500);
     assert!(!s.connected);
     assert_eq!(s.last_picture_age_ms, Some(500));
     // Arena is back with a new handle: open it, not keep the dead one.
     assert_eq!(
-        w.tick(9000, seen(0x4000_5555), false),
+        w.tick(9000, seen(0x4000_5555)),
         SenderAction::Open(0x4000_5555)
     );
 }
@@ -48,10 +51,11 @@ fn hold_while_missing() {
 #[test]
 fn static_scene_is_not_loss() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(0x4000_2c42), true);
+    w.picture(0);
+    w.tick(0, seen(0x4000_2c42));
     for t in (500..=600_000).step_by(500) {
         // Never a loss; a periodic re-open of the same handle is allowed (stall re-open).
-        let a = w.tick(t, seen(0x4000_2c42), false);
+        let a = w.tick(t, seen(0x4000_2c42));
         assert!(
             a == SenderAction::Keep || a == SenderAction::Reopen(0x4000_2c42),
             "{a:?} at {t}"
@@ -66,18 +70,20 @@ fn static_scene_is_not_loss() {
 fn unlisted_sender_is_missing() {
     // The 280 B mapping can outlive Arena for a moment; the sender list is the truth.
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(0x4000_2c42), true);
+    w.picture(0);
+    w.tick(0, seen(0x4000_2c42));
     let gone = Some(SenderSeen {
         listed: false,
         ..seen(0x4000_2c42).unwrap()
     });
-    assert_eq!(w.tick(500, gone, false), SenderAction::Hold);
+    assert_eq!(w.tick(500, gone), SenderAction::Hold);
     assert!(!w.state(500).connected);
 }
 
 #[test]
 fn state_reports_size_and_name() {
     let mut w = SenderWatch::new("Arena - Screen 2");
+    w.picture(0);
     w.tick(
         0,
         Some(SenderSeen {
@@ -86,7 +92,6 @@ fn state_reports_size_and_name() {
             height: 540,
             listed: true,
         }),
-        true,
     );
     let s = w.state(0);
     assert_eq!(s.name, "Arena - Screen 2");
@@ -97,7 +102,7 @@ fn state_reports_size_and_name() {
 #[test]
 fn no_picture_yet_has_no_age() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, None, false);
+    w.tick(0, None);
     assert_eq!(w.state(100).last_picture_age_ms, None);
 }
 
@@ -107,13 +112,13 @@ fn forget_after_failed_open_opens_again() {
     // open the same handle again, not keep the closed one.
     let mut w = SenderWatch::new("Arena - Screen 2");
     assert_eq!(
-        w.tick(0, seen(0x4000_2c42), false),
+        w.tick(0, seen(0x4000_2c42)),
         SenderAction::Open(0x4000_2c42)
     );
     w.forget();
     assert!(!w.state(0).connected);
     assert_eq!(
-        w.tick(500, seen(0x4000_2c42), false),
+        w.tick(500, seen(0x4000_2c42)),
         SenderAction::Open(0x4000_2c42)
     );
     assert!(w.state(500).connected);
@@ -124,15 +129,20 @@ fn stalled_sender_is_reopened_periodically() {
     // Spec: re-open when no new pictures come for a while although the sender is listed.
     // A static scene is harmless to re-open: the last picture stays on the wall.
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), true);
-    assert_eq!(w.tick(9_000, seen(1), false), SenderAction::Keep);
-    assert_eq!(w.tick(10_000, seen(1), false), SenderAction::Reopen(1));
-    assert_eq!(w.tick(20_000, seen(1), false), SenderAction::Keep);
-    assert_eq!(w.tick(30_000, seen(1), false), SenderAction::Reopen(1));
-    // A new picture resets the stall clock and the back-off.
-    assert_eq!(w.tick(31_000, seen(1), true), SenderAction::Keep);
-    assert_eq!(w.tick(40_000, seen(1), false), SenderAction::Keep);
-    assert_eq!(w.tick(41_000, seen(1), false), SenderAction::Reopen(1));
+    w.picture(0);
+    w.tick(0, seen(1));
+    assert_eq!(w.tick(9_000, seen(1)), SenderAction::Keep);
+    assert_eq!(w.tick(10_000, seen(1)), SenderAction::Reopen(1));
+    assert_eq!(w.tick(20_000, seen(1)), SenderAction::Keep);
+    assert_eq!(w.tick(30_000, seen(1)), SenderAction::Reopen(1));
+    // The first picture after a re-open is the reader's resample. The next one is Arena moving:
+    // it resets the stall clock and the back-off.
+    w.picture(30_500);
+    w.tick(30_500, seen(1));
+    w.picture(31_000);
+    assert_eq!(w.tick(31_000, seen(1)), SenderAction::Keep);
+    assert_eq!(w.tick(40_000, seen(1)), SenderAction::Keep);
+    assert_eq!(w.tick(41_000, seen(1)), SenderAction::Reopen(1));
     assert!(w.state(41_000).connected);
 }
 
@@ -141,7 +151,7 @@ fn picture_age_counts_from_the_picture_not_the_check() {
     // Seen on the SNV dashboard: "last new picture 496 ms" at 30 pictures / s, because the age
     // only moved at the 500 ms sender check.
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), false);
+    w.tick(0, seen(1));
     w.picture(480);
     assert_eq!(w.state(500).last_picture_age_ms, Some(20));
 }
@@ -150,7 +160,7 @@ fn picture_age_counts_from_the_picture_not_the_check() {
 fn stall_reopens(w: &mut SenderWatch, from: u64, until: u64) -> Vec<u64> {
     (from..=until)
         .step_by(500)
-        .filter(|&t| w.tick(t, seen(1), false) == SenderAction::Reopen(1))
+        .filter(|&t| w.tick(t, seen(1)) == SenderAction::Reopen(1))
         .collect()
 }
 
@@ -161,7 +171,8 @@ fn static_scene_reopens_with_growing_gaps() {
     // to at most 5 min instead of firing every 10 s.
     assert_eq!(STALL_REOPEN_MAX_MS, 300_000);
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), true);
+    w.picture(0);
+    w.tick(0, seen(1));
     assert_eq!(
         stall_reopens(&mut w, 500, 1_000_000),
         vec![10_000, 30_000, 70_000, 150_000, 310_000, 610_000, 910_000]
@@ -171,13 +182,14 @@ fn static_scene_reopens_with_growing_gaps() {
 #[test]
 fn a_new_handle_resets_the_back_off() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), true);
+    w.picture(0);
+    w.tick(0, seen(1));
     assert_eq!(
         stall_reopens(&mut w, 500, 70_000),
         vec![10_000, 30_000, 70_000]
     );
-    assert_eq!(w.tick(70_500, seen(2), false), SenderAction::Reopen(2));
-    w.tick(71_000, seen(1), false);
+    assert_eq!(w.tick(70_500, seen(2)), SenderAction::Reopen(2));
+    w.tick(71_000, seen(1));
     assert_eq!(stall_reopens(&mut w, 71_500, 100_500), vec![81_000]);
 }
 
@@ -188,7 +200,10 @@ fn stall_reopens_with_resample(w: &mut SenderWatch, from: u64, to: u64) -> Vec<u
     let mut resample = false;
     let mut t = from;
     while t <= to {
-        if w.tick(t, seen(1), resample) == SenderAction::Reopen(1) {
+        if resample {
+            w.picture(t);
+        }
+        if w.tick(t, seen(1)) == SenderAction::Reopen(1) {
             at.push(t);
             resample = true;
         } else {
@@ -202,7 +217,8 @@ fn stall_reopens_with_resample(w: &mut SenderWatch, from: u64, to: u64) -> Vec<u
 #[test]
 fn the_resample_after_a_stall_reopen_keeps_the_back_off() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), true);
+    w.picture(0);
+    w.tick(0, seen(1));
     assert_eq!(
         stall_reopens_with_resample(&mut w, 500, 160_000),
         vec![10_000, 30_000, 70_000, 150_000]
@@ -212,28 +228,35 @@ fn the_resample_after_a_stall_reopen_keeps_the_back_off() {
 #[test]
 fn a_real_picture_after_a_stall_reopen_resets_the_back_off() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), true);
-    assert_eq!(w.tick(10_000, seen(1), false), SenderAction::Reopen(1));
-    w.tick(10_500, seen(1), true); // the resample
-    w.tick(11_000, seen(1), true); // Arena moves again
+    w.picture(0);
+    w.tick(0, seen(1));
+    assert_eq!(w.tick(10_000, seen(1)), SenderAction::Reopen(1));
+    w.picture(10_500);
+    w.tick(10_500, seen(1)); // the resample
+    w.picture(11_000);
+    w.tick(11_000, seen(1)); // Arena moves again
     assert_eq!(stall_reopens(&mut w, 11_500, 21_500), vec![21_000]);
 }
 
 #[test]
 fn the_resample_does_not_refresh_the_picture_age() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), true);
-    w.tick(10_000, seen(1), false);
-    w.tick(10_500, seen(1), true);
+    w.picture(0);
+    w.tick(0, seen(1));
+    w.tick(10_000, seen(1));
+    w.picture(10_500);
+    w.tick(10_500, seen(1));
     assert_eq!(w.state(11_000).last_picture_age_ms, Some(11_000));
 }
 
 #[test]
 fn a_new_handle_clears_the_pending_resample() {
     let mut w = SenderWatch::new("Arena - Screen 2");
-    w.tick(0, seen(1), true);
-    w.tick(10_000, seen(1), false);
-    assert_eq!(w.tick(10_500, seen(2), false), SenderAction::Reopen(2));
-    w.tick(11_000, seen(2), true);
+    w.picture(0);
+    w.tick(0, seen(1));
+    w.tick(10_000, seen(1));
+    assert_eq!(w.tick(10_500, seen(2)), SenderAction::Reopen(2));
+    w.picture(11_000);
+    w.tick(11_000, seen(2));
     assert_eq!(w.state(11_000).last_picture_age_ms, Some(0));
 }
