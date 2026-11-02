@@ -180,3 +180,60 @@ fn a_new_handle_resets_the_back_off() {
     w.tick(71_000, seen(1), false);
     assert_eq!(stall_reopens(&mut w, 71_500, 100_500), vec![81_000]);
 }
+
+/// Like `stall_reopens`, but the fresh sample after each re-open reads as one new picture, as
+/// the Spout reader does on SNV (log 2.11.2026: a re-open every 10.5 s on a static scene).
+fn stall_reopens_with_resample(w: &mut SenderWatch, from: u64, to: u64) -> Vec<u64> {
+    let mut at = vec![];
+    let mut resample = false;
+    let mut t = from;
+    while t <= to {
+        if w.tick(t, seen(1), resample) == SenderAction::Reopen(1) {
+            at.push(t);
+            resample = true;
+        } else {
+            resample = false;
+        }
+        t += 500;
+    }
+    at
+}
+
+#[test]
+fn the_resample_after_a_stall_reopen_keeps_the_back_off() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), true);
+    assert_eq!(
+        stall_reopens_with_resample(&mut w, 500, 160_000),
+        vec![10_000, 30_000, 70_000, 150_000]
+    );
+}
+
+#[test]
+fn a_real_picture_after_a_stall_reopen_resets_the_back_off() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), true);
+    assert_eq!(w.tick(10_000, seen(1), false), SenderAction::Reopen(1));
+    w.tick(10_500, seen(1), true); // the resample
+    w.tick(11_000, seen(1), true); // Arena moves again
+    assert_eq!(stall_reopens(&mut w, 11_500, 21_500), vec![21_000]);
+}
+
+#[test]
+fn the_resample_does_not_refresh_the_picture_age() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), true);
+    w.tick(10_000, seen(1), false);
+    w.tick(10_500, seen(1), true);
+    assert_eq!(w.state(11_000).last_picture_age_ms, Some(11_000));
+}
+
+#[test]
+fn a_new_handle_clears_the_pending_resample() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, seen(1), true);
+    w.tick(10_000, seen(1), false);
+    assert_eq!(w.tick(10_500, seen(2), false), SenderAction::Reopen(2));
+    w.tick(11_000, seen(2), true);
+    assert_eq!(w.state(11_000).last_picture_age_ms, Some(0));
+}
