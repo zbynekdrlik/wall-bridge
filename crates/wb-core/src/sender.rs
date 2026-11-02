@@ -59,6 +59,8 @@ pub struct SenderWatch {
     stall_gap_ms: u64,
     /// A stall re-open resets the reader's samples, so its next picture is not a new one.
     resample_pending: bool,
+    /// The handle dropped by [`SenderWatch::forget`]. Opening it again continues the back-off.
+    forgotten: Option<u32>,
 }
 
 impl SenderWatch {
@@ -72,6 +74,7 @@ impl SenderWatch {
             stall_since_ms: None,
             stall_gap_ms: STALL_REOPEN_MS,
             resample_pending: false,
+            forgotten: None,
         }
     }
 
@@ -94,7 +97,7 @@ impl SenderWatch {
     /// The engine could not open the handle or a probe failed: drop it, so the next check
     /// opens the sender again.
     pub fn forget(&mut self) {
-        self.open = None;
+        self.forgotten = self.open.take();
         self.connected = false;
     }
 
@@ -107,9 +110,15 @@ impl SenderWatch {
                 match self.open {
                     None => {
                         self.open = Some(s.handle);
-                        self.restart_stall_clock(now_ms);
+                        if self.forgotten.take() == Some(s.handle) {
+                            self.stall_since_ms = Some(now_ms);
+                            self.resample_pending = true;
+                        } else {
+                            self.restart_stall_clock(now_ms);
+                        }
                         SenderAction::Open(s.handle)
                     }
+                    // A new handle is a new texture: its first picture counts as a real one.
                     Some(h) if h != s.handle => {
                         self.open = Some(s.handle);
                         self.restart_stall_clock(now_ms);
@@ -132,6 +141,7 @@ impl SenderWatch {
                 self.connected = false;
                 // Forget the handle: whatever comes back is opened fresh.
                 self.open = None;
+                self.forgotten = None;
                 SenderAction::Hold
             }
         }
