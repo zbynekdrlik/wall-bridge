@@ -260,3 +260,27 @@ fn a_new_handle_clears_the_pending_resample() {
     w.tick(11_000, seen(2));
     assert_eq!(w.state(11_000).last_picture_age_ms, Some(0));
 }
+
+#[test]
+fn a_failed_reopen_keeps_the_back_off() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.picture(0);
+    w.tick(0, seen(1));
+    assert_eq!(w.tick(10_000, seen(1)), SenderAction::Reopen(1));
+    w.forget();
+    assert_eq!(w.tick(10_500, seen(1)), SenderAction::Open(1));
+    w.picture(11_000); // the resample
+    assert_eq!(stall_reopens(&mut w, 11_500, 31_000), vec![30_500]);
+}
+
+#[test]
+fn a_new_handle_after_a_failed_reopen_resets_the_back_off() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.picture(0);
+    w.tick(0, seen(1));
+    assert_eq!(w.tick(10_000, seen(1)), SenderAction::Reopen(1));
+    w.forget();
+    assert_eq!(w.tick(10_500, seen(2)), SenderAction::Open(2));
+    w.picture(11_000);
+    assert_eq!(w.state(11_000).last_picture_age_ms, Some(0));
+}
