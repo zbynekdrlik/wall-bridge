@@ -57,6 +57,10 @@ pub struct SenderWatch {
     stall_since_ms: Option<u64>,
     /// Gap until the next stall re-open.
     stall_gap_ms: u64,
+    /// A stall re-open resets the reader's samples, so its next picture is not a new one.
+    resample_pending: bool,
+    /// The handle dropped by [`SenderWatch::forget`]. Opening it again continues the back-off.
+    forgotten: Option<u32>,
 }
 
 impl SenderWatch {
@@ -69,11 +73,17 @@ impl SenderWatch {
             last_picture_ms: None,
             stall_since_ms: None,
             stall_gap_ms: STALL_REOPEN_MS,
+            resample_pending: false,
+            forgotten: None,
         }
     }
 
     /// A new picture arrived (called by the engine for every one, between checks).
     pub fn picture(&mut self, now_ms: u64) {
+        if self.resample_pending {
+            self.resample_pending = false;
+            return;
+        }
         self.last_picture_ms = Some(now_ms);
         self.restart_stall_clock(now_ms);
     }
@@ -81,26 +91,18 @@ impl SenderWatch {
     fn restart_stall_clock(&mut self, now_ms: u64) {
         self.stall_since_ms = Some(now_ms);
         self.stall_gap_ms = STALL_REOPEN_MS;
+        self.resample_pending = false;
     }
 
     /// The engine could not open the handle or a probe failed: drop it, so the next check
     /// opens the sender again.
     pub fn forget(&mut self) {
-        self.open = None;
+        self.forgotten = self.open.take();
         self.connected = false;
     }
 
     /// One check. `seen` is `None` when the sender's mapping cannot be read.
-    /// `new_picture` is true when a new picture arrived since the last check.
-    pub fn tick(
-        &mut self,
-        now_ms: u64,
-        seen: Option<SenderSeen>,
-        new_picture: bool,
-    ) -> SenderAction {
-        if new_picture {
-            self.picture(now_ms);
-        }
+    pub fn tick(&mut self, now_ms: u64, seen: Option<SenderSeen>) -> SenderAction {
         match seen {
             Some(s) if s.listed => {
                 self.connected = true;
@@ -108,9 +110,15 @@ impl SenderWatch {
                 match self.open {
                     None => {
                         self.open = Some(s.handle);
-                        self.restart_stall_clock(now_ms);
+                        if self.forgotten.take() == Some(s.handle) {
+                            self.stall_since_ms = Some(now_ms);
+                            self.resample_pending = true;
+                        } else {
+                            self.restart_stall_clock(now_ms);
+                        }
                         SenderAction::Open(s.handle)
                     }
+                    // A new handle is a new texture: its first picture counts as a real one.
                     Some(h) if h != s.handle => {
                         self.open = Some(s.handle);
                         self.restart_stall_clock(now_ms);
@@ -120,6 +128,7 @@ impl SenderWatch {
                         let since = self.stall_since_ms.unwrap_or(now_ms);
                         if now_ms.saturating_sub(since) >= self.stall_gap_ms {
                             self.stall_since_ms = Some(now_ms);
+                            self.resample_pending = true;
                             self.stall_gap_ms = (self.stall_gap_ms * 2).min(STALL_REOPEN_MAX_MS);
                             SenderAction::Reopen(h)
                         } else {
@@ -132,6 +141,7 @@ impl SenderWatch {
                 self.connected = false;
                 // Forget the handle: whatever comes back is opened fresh.
                 self.open = None;
+                self.forgotten = None;
                 SenderAction::Hold
             }
         }
