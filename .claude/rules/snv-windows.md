@@ -45,4 +45,9 @@ paths:
 - **Arrival phase:** Arena's picture arrival phase wanders across the whole wall vblank interval within a minute (30.10.). The 2-vblank show delay is the margin against judder; 1 vblank is not safe.
 - **Stop-Process is asynchronous:** the exe stays locked for a moment after `Stop-Process -Force`; wait for the pid to go before copying over it (same-version reinstall failed 30.10.).
 - **Grabber latency:** the grabber never sees the wall, only Arena's direct output or a test bridge aimed at the grabber itself. `lat_pair.py` needs a static scene with text cuts: on moving video every picture is an arrival and the pairing is meaningless. The 29.10. figure (+2–3 ms) holds while `SHOW_DELAY_VB` stays 2.
+- **Wall TVs are off by default (owner, 6.11.):** they stay off to save power. Then panels B/C are missing, status is `display_not_acquired`, and the keeper warns "wall TVs not detected". That is normal, not a fault.
+  - For a test that needs the wall, press TELKY on the Stream Deck (Companion), then press it again to switch the TVs off afterwards.
+- **Scheduling priority (6.11.):** SongPlayer and obs64 run in the High class (obs64 through the Process Lasso rule `DefaultPriorities=obs64.exe,high`); Arena runs Normal.
+  - A task started at Task Scheduler's default priority (7) runs BelowNormal. The engine therefore raises itself to High, and the installer sets `-Priority 1`.
+  - The vblank thread runs TIME_CRITICAL (15) and the API/keeper threads BELOW_NORMAL. Songplayer reads Dante `late_bins` across any priority change: audio wins, so revert first if it worsens.
 - **SNV runner jobs** run in session 1 as `Resolume`, elevated: they can run `spec_toggle.ps1` and see Arena and Spout directly (`docs/runner.md`).

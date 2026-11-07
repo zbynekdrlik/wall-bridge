@@ -48,3 +48,4 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
 
 ## Related projects
 - songplayer: reach it through the peer channel (`peer_send`), only about the SNV wall on the Resolume PC.
+- airuleset: its `rules/rust-web-tray.md` names `crates/wb-tray` as the reference tray implementation (since airuleset 0.1.625). Tell airuleset (`peer_send`) before removing or renaming that crate.
