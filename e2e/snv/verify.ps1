@@ -55,10 +55,16 @@ if ($engine[0].MainWindowHandle -ne [IntPtr]::Zero) { throw "engine has a window
 Step "engine pid $($engine[0].Id), no window"
 
 # 4b. Scheduling: High class, and the vblank thread at 15 (TIME_CRITICAL), above SongPlayer/obs64.
+# The engine logs the vblank thread's id; another thread at 15 must not pass for it.
 if ($engine[0].PriorityClass -ne 'High') { throw "engine priority class is $($engine[0].PriorityClass), expected High" }
-$top = ($engine[0].Threads | Measure-Object -Property BasePriority -Maximum).Maximum
-if ($top -ne 15) { throw "highest engine thread base priority is $top, expected 15 (vblank thread)" }
-Step "engine class High, vblank thread base priority 15"
+$log = Get-ChildItem (Join-Path $Root 'logs') -Filter 'engine.*.log' | Sort-Object LastWriteTime | Select-Object -Last 1
+$line = Select-String -Path $log.FullName -Pattern 'scheduling priority.* tid=(\d+)' | Select-Object -Last 1
+if (-not $line) { throw "no 'scheduling priority' line with a tid in $($log.FullName)" }
+$tid = [int]$line.Matches[0].Groups[1].Value
+$vblank = @($engine[0].Threads | Where-Object { $_.Id -eq $tid })
+if ($vblank.Count -ne 1) { throw "vblank thread $tid not found in engine pid $($engine[0].Id)" }
+if ($vblank[0].BasePriority -ne 15) { throw "vblank thread $tid base priority is $($vblank[0].BasePriority), expected 15" }
+Step "engine class High, vblank thread $tid base priority 15"
 
 # 5. The tray runs from this version's folder and its icon is promoted to the taskbar.
 $trayExe = Join-Path $app 'wall-bridge-tray.exe'

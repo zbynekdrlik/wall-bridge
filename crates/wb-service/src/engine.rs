@@ -174,8 +174,8 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
     if let Err(e) = crate::priority::vblank_thread() {
         warn!(err = ?e, "could not raise vblank thread priority");
     }
-    let (class, thread) = crate::priority::effective();
-    info!(class, vblank_thread = thread, "scheduling priority");
+    let (class, thread, tid) = crate::priority::effective();
+    info!(class, vblank_thread = thread, tid, "scheduling priority");
     let (device, ctx, adapter) = create_device()?;
     info!(adapter = %adapter, "d3d11 device created");
     let mut reader = Reader::new(&device, &cfg.sender.name)?;
