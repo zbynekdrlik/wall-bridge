@@ -89,6 +89,12 @@ Describe 'Register-EngineTask' {
         $t.Principal.LogonType | Should -Be 'Interactive'
         $t.Triggers[0].CimClass.CimClassName | Should -Be 'MSFT_TaskLogonTrigger'
     }
+    It 'engine task starts the process at High priority' {
+        # Task Scheduler's default (7) starts it BelowNormal, below SongPlayer and obs64 (SNV 6.11.2026).
+        Register-EngineTask -Exe 'C:\Windows\System32\cmd.exe' -User $env:USERNAME
+        $t = Get-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine'
+        $t.Settings.Priority | Should -Be 1
+    }
     It 'watchdog runs every minute as SYSTEM' {
         $root = Join-Path $TestDrive 'wd'
         New-Item -ItemType Directory -Force $root | Out-Null
