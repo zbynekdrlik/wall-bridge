@@ -58,6 +58,10 @@ Describe 'Install-AppFiles' {
 }
 
 Describe 'Register-EngineTask' {
+    BeforeAll {
+        # These tests re-register and then delete the real task names: never on an installed box.
+        if (Test-Path 'C:\ProgramData\WallBridge\app') { throw 'wall-bridge is installed here; run the installer tests on a CI runner only' }
+    }
     AfterAll {
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine' -Confirm:$false -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Watchdog' -Confirm:$false -ErrorAction SilentlyContinue
@@ -88,6 +92,12 @@ Describe 'Register-EngineTask' {
         $t.Settings.ExecutionTimeLimit | Should -Be 'PT0S'
         $t.Principal.LogonType | Should -Be 'Interactive'
         $t.Triggers[0].CimClass.CimClassName | Should -Be 'MSFT_TaskLogonTrigger'
+    }
+    It 'engine task starts the process at High priority' {
+        # Task Scheduler's default (7) starts it BelowNormal, below SongPlayer and obs64 (SNV 6.11.2026).
+        Register-EngineTask -Exe 'C:\Windows\System32\cmd.exe' -User $env:USERNAME
+        $t = Get-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine'
+        $t.Settings.Priority | Should -Be 1
     }
     It 'watchdog runs every minute as SYSTEM' {
         $root = Join-Path $TestDrive 'wd'

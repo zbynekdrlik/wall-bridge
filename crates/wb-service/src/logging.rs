@@ -19,6 +19,9 @@ pub fn init(dir: &Path) -> Result<WorkerGuard, String> {
         .max_log_files(KEEP_FILES)
         .build(dir)
         .map_err(|e| format!("log appender {}: {e:?}", dir.display()))?;
+    // The writer thread must not run at the High class's normal level (see priority.rs).
+    #[cfg(windows)]
+    let file = crate::priority::Lowered::new(file);
     let (writer, guard) = tracing_appender::non_blocking(file);
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))

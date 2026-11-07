@@ -92,13 +92,17 @@ fn main() {
         warnings: vec![],
     }));
 
+    if let Err(e) = wb_service::priority::raise_process() {
+        error!(err = ?e, "could not raise the process to the High class");
+    }
+
     let reacquire = Arc::new(AtomicBool::new(false));
     if cfg.topology.enabled {
         let (kcfg, kstatus, kreacquire) = (cfg.clone(), status.clone(), reacquire.clone());
-        std::thread::Builder::new()
-            .name("keeper".into())
-            .spawn(move || wb_service::keeper::run(kcfg, kstatus, kreacquire))
-            .expect("keeper thread");
+        wb_service::priority::spawn_helper("keeper", move || {
+            wb_service::keeper::run(kcfg, kstatus, kreacquire)
+        })
+        .expect("keeper thread");
     } else {
         info!("surround keeper disabled in config");
         status.write().expect("status lock").topology.matches = true;
@@ -106,28 +110,22 @@ fn main() {
 
     let api_status = status.clone();
     let port = cfg.api.port;
-    std::thread::Builder::new()
-        .name("api".into())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .expect("tokio runtime");
-            rt.block_on(async move {
-                let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-                match tokio::net::TcpListener::bind(addr).await {
-                    Ok(l) => {
-                        info!(%addr, "status api listening");
-                        if let Err(e) = axum::serve(l, wb_service::api::router(api_status)).await {
-                            error!(err = ?e, "status api stopped");
-                        }
+    wb_service::priority::spawn_helper("api", move || {
+        let rt = wb_service::priority::helper_runtime(2).expect("tokio runtime");
+        rt.block_on(async move {
+            let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => {
+                    info!(%addr, "status api listening");
+                    if let Err(e) = axum::serve(l, wb_service::api::router(api_status)).await {
+                        error!(err = ?e, "status api stopped");
                     }
-                    Err(e) => error!(%addr, err = ?e, "status api bind failed"),
                 }
-            });
-        })
-        .expect("api thread");
+                Err(e) => error!(%addr, err = ?e, "status api bind failed"),
+            }
+        });
+    })
+    .expect("api thread");
 
     if let Err(e) = wb_service::engine::run(cfg, status, reacquire) {
         error!(err = ?e, "engine failed to start");
