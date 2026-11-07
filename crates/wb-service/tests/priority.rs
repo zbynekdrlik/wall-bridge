@@ -42,7 +42,10 @@ fn helper_threads_are_below_normal() {
 #[test]
 fn class_names_for_the_log() {
     assert_eq!(priority::class_name(HIGH_PRIORITY_CLASS.0), "High");
-    assert_eq!(priority::class_name(BELOW_NORMAL_PRIORITY_CLASS.0), "BelowNormal");
+    assert_eq!(
+        priority::class_name(BELOW_NORMAL_PRIORITY_CLASS.0),
+        "BelowNormal"
+    );
     assert_eq!(priority::class_name(NORMAL_PRIORITY_CLASS.0), "Normal");
     assert_eq!(priority::class_name(0x1234), "unknown");
 }
