@@ -58,6 +58,10 @@ Describe 'Install-AppFiles' {
 }
 
 Describe 'Register-EngineTask' {
+    BeforeAll {
+        # These tests re-register and then delete the real task names: never on an installed box.
+        if (Test-Path 'C:\ProgramData\WallBridge\app') { throw 'wall-bridge is installed here; run the installer tests on a CI runner only' }
+    }
     AfterAll {
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Engine' -Confirm:$false -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskPath '\WallBridge\' -TaskName 'WallBridge Watchdog' -Confirm:$false -ErrorAction SilentlyContinue

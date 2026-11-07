@@ -20,10 +20,17 @@ pub fn vblank_thread() -> Result<()> {
     unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) }
 }
 
-/// Failure only costs priority, so it is logged and the thread goes on.
+/// Failure only costs priority, so it is logged and the thread goes on. Each lowered thread
+/// logs its id; `e2e/snv/verify.ps1` checks those threads on SNV.
 pub fn helper_thread() {
-    if let Err(e) = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) } {
-        tracing::warn!(err = ?e, "could not lower helper thread priority");
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("unnamed");
+    let tid = unsafe { GetCurrentThreadId() };
+    match unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) } {
+        Ok(()) => tracing::debug!(thread = name, tid, "thread lowered"),
+        Err(e) => {
+            tracing::warn!(thread = name, tid, err = ?e, "could not lower helper thread priority")
+        }
     }
 }
 
