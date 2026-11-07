@@ -54,6 +54,12 @@ if ($engine.Count -ne 1) { throw "expected one engine from $app, found $($engine
 if ($engine[0].MainWindowHandle -ne [IntPtr]::Zero) { throw "engine has a window: '$($engine[0].MainWindowTitle)'" }
 Step "engine pid $($engine[0].Id), no window"
 
+# 4b. Scheduling: High class, and the vblank thread at 15 (TIME_CRITICAL), above SongPlayer/obs64.
+if ($engine[0].PriorityClass -ne 'High') { throw "engine priority class is $($engine[0].PriorityClass), expected High" }
+$top = ($engine[0].Threads | Measure-Object -Property BasePriority -Maximum).Maximum
+if ($top -ne 15) { throw "highest engine thread base priority is $top, expected 15 (vblank thread)" }
+Step "engine class High, vblank thread base priority 15"
+
 # 5. The tray runs from this version's folder and its icon is promoted to the taskbar.
 $trayExe = Join-Path $app 'wall-bridge-tray.exe'
 $tray = @(Get-Process wall-bridge-tray -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $trayExe })

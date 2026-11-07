@@ -92,12 +92,19 @@ fn main() {
         warnings: vec![],
     }));
 
+    if let Err(e) = wb_service::priority::raise_process() {
+        error!(err = ?e, "could not raise the process to the High class");
+    }
+
     let reacquire = Arc::new(AtomicBool::new(false));
     if cfg.topology.enabled {
         let (kcfg, kstatus, kreacquire) = (cfg.clone(), status.clone(), reacquire.clone());
         std::thread::Builder::new()
             .name("keeper".into())
-            .spawn(move || wb_service::keeper::run(kcfg, kstatus, kreacquire))
+            .spawn(move || {
+                wb_service::priority::helper_thread();
+                wb_service::keeper::run(kcfg, kstatus, kreacquire)
+            })
             .expect("keeper thread");
     } else {
         info!("surround keeper disabled in config");
@@ -109,8 +116,10 @@ fn main() {
     std::thread::Builder::new()
         .name("api".into())
         .spawn(move || {
+            wb_service::priority::helper_thread();
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
+                .on_thread_start(wb_service::priority::helper_thread)
                 .enable_all()
                 .build()
                 .expect("tokio runtime");

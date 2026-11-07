@@ -69,14 +69,15 @@ function Install-AppFiles([string]$Source, [string]$Root, [string]$Version) {
 }
 
 # The engine runs in the desktop user's session: Spout names are session-local
-# (docs/spikes/2026-10-session0.md).
+# (docs/spikes/2026-10-session0.md). Priority 1 = High class (the default 7 is BelowNormal,
+# below SongPlayer and obs64); the exe also raises itself.
 function Register-EngineTask([string]$Exe, [string]$User) {
     $action = New-ScheduledTaskAction -Execute $Exe -WorkingDirectory (Split-Path $Exe)
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
     $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
-        -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1)
+        -RestartCount 9999 -RestartInterval (New-TimeSpan -Minutes 1) -Priority 1
     Register-ScheduledTask -TaskName $script:EngineTask -TaskPath $script:TaskPath -Action $action `
         -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 }

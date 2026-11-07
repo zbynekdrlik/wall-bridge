@@ -25,7 +25,6 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::Media::timeBeginPeriod;
-use windows::Win32::System::Threading::*;
 
 /// Back-off between attempts to open the display target.
 const REOPEN_BACKOFF_S: [u64; 4] = [1, 2, 5, 10];
@@ -171,10 +170,12 @@ fn display_state(cfg: &Config, scanout: Option<&Scanout>) -> DisplayState {
 pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()> {
     unsafe {
         timeBeginPeriod(1);
-        if SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST).is_err() {
-            warn!("could not raise engine thread priority");
-        }
     }
+    if let Err(e) = crate::priority::vblank_thread() {
+        warn!(err = ?e, "could not raise vblank thread priority");
+    }
+    let (class, thread) = crate::priority::effective();
+    info!(class, vblank_thread = thread, "scheduling priority");
     let (device, ctx, adapter) = create_device()?;
     info!(adapter = %adapter, "d3d11 device created");
     let mut reader = Reader::new(&device, &cfg.sender.name)?;

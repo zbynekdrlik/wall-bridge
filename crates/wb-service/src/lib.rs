@@ -9,3 +9,5 @@ pub mod engine;
 pub mod instance;
 #[cfg(windows)]
 pub mod keeper;
+#[cfg(windows)]
+pub mod priority;
