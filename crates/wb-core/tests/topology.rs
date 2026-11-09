@@ -191,7 +191,11 @@ fn wall_that_formed_anyway_clears_failures() {
         h.restore_finished(next, false);
         let healthy = decide(&def(), Ok(wall()), true, true, &mut h, next + 10_000);
         assert_eq!(healthy, KeeperAction::None);
-        assert_eq!(h.failures(next + 10_000), 0, "a healthy wall clears the failures");
+        assert_eq!(
+            h.failures(next + 10_000),
+            0,
+            "a healthy wall clears the failures"
+        );
         t = next + 2 * MIN;
     }
     let (a, _) = confirmed(&collapsed(), &mut h, t);
