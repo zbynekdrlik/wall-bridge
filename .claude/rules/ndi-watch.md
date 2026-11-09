@@ -12,6 +12,7 @@ paths:
   - `systemctl --user` needs `XDG_RUNTIME_DIR=/run/user/$(id -u)` in this shell.
 - Log: `~/.local/state/ndi-watch/ndi-watch.YYYY-MM-DD.jsonl` (UTC).
   - `gap side=sender`: the sender's own timestamps jumped too, so songs-snv produced no frames. `side=transport`: frames were stamped on time but arrived late.
+  - `side=unknown`: a frame had no sender timestamp. `loop_ms` on a gap: the longest time ndi-watch itself spent outside `recv_capture` since the previous frame; a gap close to it is on dev1, not on the network.
   - `stall`/`resume`: no frame for 1 s or more, then its length. `minute`: frames, gaps and max intervals per minute.
   - At 60 fps a gap is over 41.7 ms (2.5 frames); single 42-43 ms gaps also occur on an idle picture and are noise. A visible freeze is 150 ms or more.
 - Tests: `python3 -m unittest -v test_gaps` in `tools/ndi-watch` (pure, no NDI needed); CI runs them in `test-linux`.

@@ -65,42 +65,58 @@ def watch(name: str, url: str, log: Log) -> None:
     fmt = None
     last_frame = time.time()
     stalled = False
+    # Longest time our own loop spent outside recv_capture since the last frame: a gap
+    # with a large loop_ms is on this receiver, not on the network or the sender.
+    busy_ms = 0.0
     while True:
         kind, v, a, m = ndi.recv_capture_v2(recv, 200)
         now = time.time()
-        if kind == ndi.FRAME_TYPE_VIDEO:
-            cur = (v.xres, v.yres, v.frame_rate_N, v.frame_rate_D, str(v.FourCC))
-            if cur != fmt:
-                fmt = cur
-                tracker.set_rate(v.frame_rate_N, v.frame_rate_D)
-                log.write(name, "format", now, xres=cur[0], yres=cur[1],
-                          rate_n=cur[2], rate_d=cur[3], fourcc=cur[4])
-            if stalled:
-                log.write(name, "resume", now, stalled_ms=round((now - last_frame) * 1000))
-                stalled = False
-            gap = tracker.feed(now, v.timestamp)
-            if gap:
-                log.write(name, "gap", now, side=gap.side, recv_ms=round(gap.recv_ms, 1),
-                          send_ms=round(gap.send_ms, 1), expected_ms=round(gap.expected_ms, 2),
-                          timecode=v.timecode)
-            last_frame = now
-            ndi.recv_free_video_v2(recv, v)
-        elif kind == ndi.FRAME_TYPE_AUDIO:
-            ndi.recv_free_audio_v2(recv, a)
-        elif kind == ndi.FRAME_TYPE_METADATA:
-            ndi.recv_free_metadata(recv, m)
-        elif kind == ndi.FRAME_TYPE_STATUS_CHANGE:
-            log.write(name, "status_change", now,
-                      connections=ndi.recv_get_no_connections(recv))
-        if not stalled and now - last_frame > STALL_S:
-            stalled = True
-            tracker.reset()
-            log.write(name, "stall", now, since=utc(last_frame),
-                      connections=ndi.recv_get_no_connections(recv))
-        for s in tracker.take_finished():
-            log.write(name, "minute", s.start, frames=s.frames, gaps=s.gaps,
-                      sender_gaps=s.sender_gaps, max_recv_ms=round(s.max_recv_ms, 1),
-                      max_send_ms=round(s.max_send_ms, 1))
+        try:
+            if kind == ndi.FRAME_TYPE_VIDEO:
+                cur = (v.xres, v.yres, v.frame_rate_N, v.frame_rate_D, str(v.FourCC))
+                stamp, timecode = v.timestamp, v.timecode
+                ndi.recv_free_video_v2(recv, v)
+                kind = None  # freed
+                if cur != fmt:
+                    fmt = cur
+                    tracker.set_rate(cur[2], cur[3])
+                    log.write(name, "format", now, xres=cur[0], yres=cur[1],
+                              rate_n=cur[2], rate_d=cur[3], fourcc=cur[4])
+                if stalled:
+                    log.write(name, "resume", now, stalled_ms=round((now - last_frame) * 1000))
+                    stalled = False
+                gap = tracker.feed(now, stamp)
+                if gap:
+                    send = None if gap.send_ms is None else round(gap.send_ms, 1)
+                    log.write(name, "gap", now, side=gap.side, recv_ms=round(gap.recv_ms, 1),
+                              send_ms=send, expected_ms=round(gap.expected_ms, 2),
+                              loop_ms=round(busy_ms, 1), timecode=timecode)
+                last_frame = now
+                busy_ms = 0.0
+            elif kind == ndi.FRAME_TYPE_STATUS_CHANGE:
+                log.write(name, "status_change", now,
+                          connections=ndi.recv_get_no_connections(recv))
+            if not stalled and now - last_frame > STALL_S:
+                stalled = True
+                tracker.reset()
+                log.write(name, "stall", now, since=utc(last_frame),
+                          connections=ndi.recv_get_no_connections(recv))
+            tracker.tick(now)
+            for s in tracker.take_finished():
+                log.write(name, "minute", s.start, frames=s.frames, gaps=s.gaps,
+                          sender_gaps=s.sender_gaps, max_recv_ms=round(s.max_recv_ms, 1),
+                          max_send_ms=round(s.max_send_ms, 1))
+        except Exception as e:  # keep receiving; a dead thread would end the whole service
+            print(f"{utc(now)} {name} loop error: {e!r}", file=sys.stderr, flush=True)
+            time.sleep(1)
+        finally:
+            if kind == ndi.FRAME_TYPE_VIDEO:
+                ndi.recv_free_video_v2(recv, v)
+            elif kind == ndi.FRAME_TYPE_AUDIO:
+                ndi.recv_free_audio_v2(recv, a)
+            elif kind == ndi.FRAME_TYPE_METADATA:
+                ndi.recv_free_metadata(recv, m)
+        busy_ms = max(busy_ms, (time.time() - now) * 1000)
 
 
 def main() -> int:

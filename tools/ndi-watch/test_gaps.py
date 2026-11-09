@@ -1,6 +1,6 @@
 import unittest
 
-from gaps import Tracker
+from gaps import TIMESTAMP_UNDEFINED, Tracker
 
 FRAME = 1 / 60  # seconds
 TICK = 10_000_000 // 60  # NDI 100 ns units per frame
@@ -74,6 +74,30 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(s.gaps, 1)
         self.assertEqual(s.sender_gaps, 1)
         self.assertAlmostEqual(s.max_recv_ms, 300, delta=1)
+
+
+    def test_unstamped_frame_is_unknown_not_sender(self):
+        t = Tracker()
+        frames = [(100.0, 0), (100.3, TIMESTAMP_UNDEFINED)]
+        gaps = run(t, frames)
+        self.assertEqual(len(gaps), 1)
+        self.assertEqual(gaps[0].side, "unknown")
+        self.assertIsNone(gaps[0].send_ms)
+        self.assertEqual(t.summary.max_send_ms, 0.0)
+
+    def test_tick_closes_the_minute_during_a_stall(self):
+        t = Tracker()
+        run(t, [(30.0, 0), (30 + FRAME, TICK)])
+        t.tick(65.0)  # no frames since 30 s
+        done = t.take_finished()
+        self.assertEqual([s.start for s in done], [0])
+        self.assertEqual(done[0].frames, 2)
+
+    def test_tick_before_any_frame_does_nothing(self):
+        t = Tracker()
+        t.tick(65.0)
+        self.assertIsNone(t.summary)
+        self.assertEqual(t.take_finished(), [])
 
 
 if __name__ == "__main__":

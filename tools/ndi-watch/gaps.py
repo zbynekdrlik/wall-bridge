@@ -13,18 +13,22 @@ from dataclasses import dataclass, field
 
 # A gap is an interval of more than this many expected frame intervals.
 GAP_FACTOR = 2.5
+# NDIlib_recv_timestamp_undefined: the sender did not stamp the frame.
+TIMESTAMP_UNDEFINED = 0x7FFFFFFFFFFFFFFF
 
 
 @dataclass
 class Gap:
     at: float  # recv time of the frame that ended the gap
     recv_ms: float
-    send_ms: float
+    send_ms: float | None  # None when either frame had no sender timestamp
     expected_ms: float
 
     @property
     def side(self) -> str:
         """Where the gap came from, judged by the two clocks."""
+        if self.send_ms is None:
+            return "unknown"
         limit = self.expected_ms * GAP_FACTOR
         if self.send_ms > limit:
             return "sender"
@@ -67,11 +71,13 @@ class Tracker:
         gap = None
         if self.last_recv is not None:
             recv_ms = (recv - self.last_recv) * 1000
-            send_ms = (send - self.last_send) / 1e4
+            stamped = TIMESTAMP_UNDEFINED not in (send, self.last_send)
+            send_ms = (send - self.last_send) / 1e4 if stamped else None
             s.max_recv_ms = max(s.max_recv_ms, recv_ms)
-            s.max_send_ms = max(s.max_send_ms, send_ms)
+            if send_ms is not None:
+                s.max_send_ms = max(s.max_send_ms, send_ms)
             limit = self.expected_ms * GAP_FACTOR
-            if recv_ms > limit or send_ms > limit:
+            if recv_ms > limit or (send_ms or 0) > limit:
                 gap = Gap(recv, recv_ms, send_ms, self.expected_ms)
                 s.gaps += 1
                 if gap.side == "sender":
@@ -79,6 +85,11 @@ class Tracker:
         self.last_recv = recv
         self.last_send = send
         return gap
+
+    def tick(self, now: float) -> None:
+        """Close the minute even when no frame comes (during a stall)."""
+        if self.summary is not None:
+            self._roll(now)
 
     def _roll(self, now: float) -> None:
         minute = now - now % 60
