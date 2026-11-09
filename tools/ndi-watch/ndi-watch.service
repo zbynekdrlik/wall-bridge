@@ -1,0 +1,13 @@
+# systemd --user unit on dev1 (ticket #15). Install: see .claude/rules/ndi-watch.md.
+[Unit]
+Description=wall-bridge ndi-watch: frame gaps of the songs-snv NDI sources
+
+[Service]
+WorkingDirectory=%h/devel/wall-bridge/tools/ndi-watch
+ExecStart=%h/.local/share/ndi-watch/venv/bin/python ndi_watch.py --log-dir %h/.local/state/ndi-watch "SONGS-SNV (Arena - BG)=10.77.9.212:5961" "SONGS-SNV (Arena - TXT)=10.77.9.212:5962"
+Restart=always
+RestartSec=10
+StandardOutput=null
+
+[Install]
+WantedBy=default.target

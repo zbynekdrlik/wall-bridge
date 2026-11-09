@@ -40,6 +40,7 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
 
 ## Playbook router
 - SNV / Windows / Arena gotchas → `.claude/rules/snv-windows.md` (auto-loads on its `paths:`)
+- NDI monitor of the songs-snv sources on dev1 → `.claude/rules/ndi-watch.md` (auto-loads on its `paths:`)
 
 ## Owner rules (carried over from songplayer)
 - Never change the operator's Arena composition permanently without his OK.
