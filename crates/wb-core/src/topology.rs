@@ -213,6 +213,10 @@ pub fn decide(
         h.gave_up = false;
         if span_live || specialized {
             h.on_desktop = 0;
+            // The wall is whole and off the desktop. A restore that reported an error but
+            // formed it anyway (FormGrid -191 when the TVs came on, SNV 6.11.) is not a
+            // failure that should count toward giving up.
+            h.failed_at.clear();
             return KeeperAction::None;
         }
         h.on_desktop += 1;
