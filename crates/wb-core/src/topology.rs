@@ -215,7 +215,6 @@ pub fn decide(
     }
     if h.matches {
         h.mismatches = 0;
-        h.gave_up = false;
         if span_live || specialized {
             h.on_desktop = 0;
             // The wall is whole and off the desktop. A restore that reported an error but
@@ -225,6 +224,7 @@ pub fn decide(
             h.healthy = healthy_before + 1;
             if h.healthy >= CONFIRM_READS {
                 h.failed_at.clear();
+                h.gave_up = false;
             }
             return KeeperAction::None;
         }

@@ -75,8 +75,9 @@ def watch(name: str, url: str, log: Log) -> None:
             if kind == ndi.FRAME_TYPE_VIDEO:
                 cur = (v.xres, v.yres, v.frame_rate_N, v.frame_rate_D, str(v.FourCC))
                 stamp, timecode = v.timestamp, v.timecode
+                loop_ms, busy_ms = busy_ms, 0.0
+                kind = None  # freed here, never again in finally
                 ndi.recv_free_video_v2(recv, v)
-                kind = None  # freed
                 if cur != fmt:
                     fmt = cur
                     tracker.set_rate(cur[2], cur[3])
@@ -90,9 +91,8 @@ def watch(name: str, url: str, log: Log) -> None:
                     send = None if gap.send_ms is None else round(gap.send_ms, 1)
                     log.write(name, "gap", now, side=gap.side, recv_ms=round(gap.recv_ms, 1),
                               send_ms=send, expected_ms=round(gap.expected_ms, 2),
-                              loop_ms=round(busy_ms, 1), timecode=timecode)
+                              loop_ms=round(loop_ms, 1), timecode=timecode)
                 last_frame = now
-                busy_ms = 0.0
             elif kind == ndi.FRAME_TYPE_STATUS_CHANGE:
                 log.write(name, "status_change", now,
                           connections=ndi.recv_get_no_connections(recv))
