@@ -66,6 +66,8 @@ pub struct KeeperHistory {
     mismatches: u32,
     /// Reads in a row with the grid intact but the wall back on the desktop.
     on_desktop: u32,
+    /// Reads in a row with the wall whole and off the desktop.
+    healthy: u32,
     failed_at: Vec<u64>,
 }
 
@@ -181,10 +183,13 @@ pub fn decide(
             h.read_errors += 1;
             h.mismatches = 0;
             h.on_desktop = 0;
+            h.healthy = 0;
             return KeeperAction::None;
         }
     };
     h.read_errors = 0;
+    // Any read that is not whole and off the desktop breaks the healthy run.
+    let healthy_before = std::mem::take(&mut h.healthy);
     h.matches = span_live || def.matches(&grids);
     let wall_visible = grids
         .iter()
@@ -210,9 +215,17 @@ pub fn decide(
     }
     if h.matches {
         h.mismatches = 0;
-        h.gave_up = false;
         if span_live || specialized {
             h.on_desktop = 0;
+            // The wall is whole and off the desktop. A restore that reported an error but
+            // formed it anyway (FormGrid -191 when the TVs came on, SNV 6.11.) is not a
+            // failure that should count toward giving up. A single good read between
+            // collapses is not enough: the wall must stay healthy for CONFIRM_READS reads.
+            h.healthy = healthy_before + 1;
+            if h.healthy >= CONFIRM_READS {
+                h.failed_at.clear();
+                h.gave_up = false;
+            }
             return KeeperAction::None;
         }
         h.on_desktop += 1;

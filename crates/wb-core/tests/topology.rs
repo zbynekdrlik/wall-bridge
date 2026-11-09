@@ -180,6 +180,118 @@ fn gives_up_after_3_failed_restores_in_30_min() {
 }
 
 #[test]
+fn wall_that_formed_anyway_clears_failures() {
+    // SNV 6.11.: TVs switched on, FormGrid returned -191, yet the 1x3 grid and the
+    // specialization were there 6 s later. Such a restore must not count toward giving up.
+    // Specialized on SNV, NVAPI lists only the grabber; the live span is the proof.
+    let specialized = vec![grid(1, 1, &[GRABBER])];
+    let mut h = KeeperHistory::default();
+    let mut t = 0;
+    for _ in 0..3 {
+        let (a, next) = confirmed(&collapsed(), &mut h, t);
+        assert!(matches!(a, KeeperAction::Restore(_)));
+        h.restore_finished(next, false);
+        let mut at = next;
+        for _ in 0..CONFIRM_READS {
+            at += 10_000;
+            let healthy = decide(&def(), Ok(specialized.clone()), true, true, &mut h, at);
+            assert_eq!(healthy, KeeperAction::None);
+        }
+        assert_eq!(
+            h.failures(at),
+            0,
+            "a wall healthy for 3 reads clears the failures"
+        );
+        t = at + 2 * MIN;
+    }
+    let (a, _) = confirmed(&collapsed(), &mut h, t);
+    assert!(matches!(a, KeeperAction::Restore(_)));
+    assert!(!h.gave_up);
+}
+
+#[test]
+fn one_healthy_read_between_collapses_still_gives_up() {
+    // A wall that flaps (collapsed, one good read, collapsed again) is not fixed: the
+    // failures must still add up to giving up.
+    let specialized = vec![grid(1, 1, &[GRABBER])];
+    let mut h = KeeperHistory::default();
+    let mut t = 0;
+    for _ in 0..3 {
+        let (a, next) = confirmed(&collapsed(), &mut h, t);
+        assert!(matches!(a, KeeperAction::Restore(_)));
+        h.restore_finished(next, false);
+        decide(
+            &def(),
+            Ok(specialized.clone()),
+            true,
+            true,
+            &mut h,
+            next + 10_000,
+        );
+        assert!(
+            h.failures(next + 10_000) > 0,
+            "one good read clears nothing"
+        );
+        t = next + 2 * MIN;
+    }
+    let (a, _) = confirmed(&collapsed(), &mut h, t);
+    assert_eq!(a, KeeperAction::GiveUp);
+}
+
+#[test]
+fn healthy_run_broken_by_any_bad_read_starts_over() {
+    let specialized = vec![grid(1, 1, &[GRABBER])];
+    let partial = vec![grid(1, 1, &[A]), grid(1, 1, &[GRABBER])];
+    let breakers: Vec<Result<Vec<Grid>, String>> = vec![
+        Ok(collapsed()),
+        Err("EnumDisplayGrids = -1".into()),
+        Ok(partial),
+    ];
+    for bad in breakers {
+        let mut h = KeeperHistory::default();
+        let (_, t) = confirmed(&collapsed(), &mut h, 0);
+        h.restore_finished(t, false);
+        let mut at = t;
+        let mut read = |r: Result<Vec<Grid>, String>, live: bool, h: &mut KeeperHistory| {
+            at += 10_000;
+            decide(&def(), r, live, live, h, at);
+            at
+        };
+        read(Ok(specialized.clone()), true, &mut h);
+        read(Ok(specialized.clone()), true, &mut h);
+        read(bad.clone(), false, &mut h);
+        read(Ok(specialized.clone()), true, &mut h);
+        let now = read(Ok(specialized.clone()), true, &mut h);
+        assert_eq!(
+            h.failures(now),
+            1,
+            "2 + 2 healthy reads around {bad:?} clear nothing"
+        );
+        let now = read(Ok(specialized.clone()), true, &mut h);
+        assert_eq!(h.failures(now), 0, "the third in a row clears");
+    }
+}
+
+#[test]
+fn given_up_stays_until_the_wall_is_healthy_for_3_reads() {
+    let specialized = vec![grid(1, 1, &[GRABBER])];
+    let mut h = KeeperHistory::default();
+    let mut t = 0;
+    for _ in 0..3 {
+        let (_, next) = confirmed(&collapsed(), &mut h, t);
+        h.restore_finished(next, false);
+        t = next + 2 * MIN;
+    }
+    let (a, mut at) = confirmed(&collapsed(), &mut h, t);
+    assert_eq!(a, KeeperAction::GiveUp);
+    for k in 1..=CONFIRM_READS {
+        at += 10_000;
+        decide(&def(), Ok(specialized.clone()), true, true, &mut h, at);
+        assert_eq!(h.gave_up, k < CONFIRM_READS, "after {k} healthy reads");
+    }
+}
+
+#[test]
 fn successful_restore_clears_failures() {
     let mut h = KeeperHistory::default();
     let (_, t) = confirmed(&collapsed(), &mut h, 0);
