@@ -180,6 +180,26 @@ fn gives_up_after_3_failed_restores_in_30_min() {
 }
 
 #[test]
+fn wall_that_formed_anyway_clears_failures() {
+    // SNV 6.11.: TVs switched on, FormGrid returned -191, yet the 1x3 grid and the
+    // specialization were there 6 s later. Such a restore must not count toward giving up.
+    let mut h = KeeperHistory::default();
+    let mut t = 0;
+    for _ in 0..3 {
+        let (a, next) = confirmed(&collapsed(), &mut h, t);
+        assert!(matches!(a, KeeperAction::Restore(_)));
+        h.restore_finished(next, false);
+        let healthy = decide(&def(), Ok(wall()), true, true, &mut h, next + 10_000);
+        assert_eq!(healthy, KeeperAction::None);
+        assert_eq!(h.failures(next + 10_000), 0, "a healthy wall clears the failures");
+        t = next + 2 * MIN;
+    }
+    let (a, _) = confirmed(&collapsed(), &mut h, t);
+    assert!(matches!(a, KeeperAction::Restore(_)));
+    assert!(!h.gave_up);
+}
+
+#[test]
 fn successful_restore_clears_failures() {
     let mut h = KeeperHistory::default();
     let (_, t) = confirmed(&collapsed(), &mut h, 0);
