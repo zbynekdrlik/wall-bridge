@@ -22,6 +22,7 @@ paths:
 - **Quitting Arena:** a graceful quit raises "Do you really want to quit? All unsaved progress will be lost" (Quit / Cancel / Save & Quit).
   - Never answer it for the operator. Cancel with Escape on the dialog.
   - Arena reads its Advanced Output preset at start and does not rewrite it on quit.
+- **Arena's own log:** `C:\Users\Resolume\AppData\Local\Resolume Arena\Resolume Arena log.txt` (local time, UTC+1). It is rewritten at every Arena start, so it holds nothing from before the last launch (no NDI history, 9.11.). Read it with a shared `FileStream`.
 - **GUI clicks in Arena via MCP:** risky, a misclick can start a clip (clips only from the owner's Stream Deck). Prefer file / REST changes.
 - **MCP Shell:** output over ~70 kB is cut off, so filter on the PC.
   - For files and secrets use `~/.claude/work-products/snv_mcp_shell.py` (talks to the gateway directly; `{ENV:NAME}` placeholders keep secrets off the transcript).
