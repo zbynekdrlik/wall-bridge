@@ -319,6 +319,15 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                                     size = ?reader.size(),
                                     "sender opened"
                                 );
+                                // Pay the shared texture's first-use cost here, timed, instead
+                                // of inside the first present (137 ms at present #2, #20).
+                                match reader.warm_up(&ctx, 500) {
+                                    Ok(Some(us)) => info!(us, "sender warm-up copy done"),
+                                    Ok(None) => warn!(
+                                        "sender warm-up copy skipped or not done within 500 ms"
+                                    ),
+                                    Err(e) => warn!(err = ?e, "sender warm-up copy failed"),
+                                }
                                 if reader.size() != Some((display.width, display.height)) {
                                     clear(&device, &ctx, &slots);
                                 }
