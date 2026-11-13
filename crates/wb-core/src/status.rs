@@ -3,6 +3,7 @@
 use crate::health::{Reason, State};
 use crate::pacing::PacingWindow;
 use crate::sender::SenderState;
+use crate::slow_show::SlowShow;
 use serde::{Serialize, Serializer};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -38,6 +39,10 @@ pub struct Status {
     pub sender: SenderState,
     pub pacing: PacingWindow,
     pub warnings: Vec<String>,
+    /// Presents of 8 ms or more, oldest first, each with its own time (#22).
+    pub slow_shows: Vec<SlowShow>,
+    /// Slow presents recorded since the engine started, overwritten ones included.
+    pub slow_shows_total: u64,
 }
 
 impl Serialize for Status {
@@ -53,6 +58,8 @@ impl Serialize for Status {
             sender: &'a SenderState,
             pacing: &'a PacingWindow,
             warnings: &'a [String],
+            slow_shows: &'a [SlowShow],
+            slow_shows_total: u64,
         }
         Wire {
             version: &self.version,
@@ -64,6 +71,8 @@ impl Serialize for Status {
             sender: &self.sender,
             pacing: &self.pacing,
             warnings: &self.warnings,
+            slow_shows: &self.slow_shows,
+            slow_shows_total: self.slow_shows_total,
         }
         .serialize(s)
     }

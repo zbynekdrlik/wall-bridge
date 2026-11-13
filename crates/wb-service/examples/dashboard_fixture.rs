@@ -47,6 +47,8 @@ async fn main() {
             ..Default::default()
         },
         warnings: vec![],
+        slow_shows: vec![],
+        slow_shows_total: 0,
     };
     let app = wb_service::api::router(
         Arc::new(RwLock::new(status)),
