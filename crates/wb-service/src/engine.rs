@@ -442,6 +442,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     holds = %holds_txt,
                     holds_dropped,
                     slow_shows = %slow_txt,
+                    lock_bypassed = reader.take_bypassed(),
                     "window"
                 );
                 holds.clear();

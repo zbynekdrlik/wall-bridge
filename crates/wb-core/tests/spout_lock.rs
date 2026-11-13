@@ -14,7 +14,10 @@ fn short_timeouts_do_not_bypass() {
     assert!(!g.bypass(1000 + STUCK_MS - 1));
     g.on_locked();
     g.on_timeout(5000);
-    assert!(!g.bypass(5000 + STUCK_MS - 1), "the stuck time restarts after a lock");
+    assert!(
+        !g.bypass(5000 + STUCK_MS - 1),
+        "the stuck time restarts after a lock"
+    );
 }
 
 #[test]
