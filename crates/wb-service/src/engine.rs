@@ -212,6 +212,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
         };
         let period_us = (1_000_000.0 / scanout.refresh.max(1.0)) as u64;
         let guard_us = cfg.pacing.guard_us;
+        let ring_t = Instant::now();
         let slots = match ring(&device, cfg.pacing.ring, scanout.width, scanout.height) {
             Ok(s) => s,
             Err(e) => {
@@ -221,6 +222,11 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
             }
         };
         clear(&device, &ctx, &slots);
+        info!(
+            slots = cfg.pacing.ring,
+            ms = ring_t.elapsed().as_millis() as u64,
+            "picture ring allocated and cleared"
+        );
         let mut pacer = Pacer::new(cfg.pacing.ring);
         let display = display_state(&cfg, Some(&scanout));
         // Publish at once: the keeper and the updater's health check read it.
@@ -235,6 +241,12 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
         let mut content_prev = Content::Unknown;
         let mut content_last = Content::Unknown;
         let mut holds_dropped = 0u64;
+        // Presents slower than SLOW_SHOW_US: (Unix ms at its start, µs, present number since
+        // the target was acquired), so a box-wide stall can be timed exactly (#20).
+        const SLOW_SHOW_US: u64 = 20_000;
+        const MAX_SLOW: usize = 16;
+        let mut slow_shows: Vec<(u64, u64, u64)> = Vec::with_capacity(MAX_SLOW);
+        let mut presents = 0u64;
         let mut missed = 0u64;
         let mut lock_timeouts = 0u64;
         // Per-window maxima (µs) of the steps on the vblank path, to see where time goes.
@@ -260,11 +272,17 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
 
             if let Show::New(slot) = pacer.on_vblank() {
                 let t = Instant::now();
+                let t_ms = now_ms();
                 if let Err(e) = scanout.show(&ctx, &slots[slot]) {
                     error!(err = ?e, "scanout show failed, re-acquiring the display");
                     break;
                 }
-                show_us_max = show_us_max.max(t.elapsed().as_micros() as u64);
+                let us = t.elapsed().as_micros() as u64;
+                presents += 1;
+                show_us_max = show_us_max.max(us);
+                if us >= SLOW_SHOW_US && slow_shows.len() < MAX_SLOW {
+                    slow_shows.push((t_ms, us, presents));
+                }
             }
             if let Some(len) = pacer.take_long_hold() {
                 if holds.len() < MAX_HOLDS {
@@ -387,6 +405,12 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     })
                     .collect::<Vec<_>>()
                     .join(",");
+                // Each slow present as "<UTC start>/<µs>@<present number since acquire>".
+                let slow_txt = slow_shows
+                    .iter()
+                    .map(|&(at, us, n)| format!("{}/{us}@{n}", hms_utc(at)))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 info!(
                     vblanks = w.vblanks,
                     new = w.new,
@@ -408,10 +432,12 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     picture_age_ms = ?sender.last_picture_age_ms,
                     holds = %holds_txt,
                     holds_dropped,
+                    slow_shows = %slow_txt,
                     "window"
                 );
                 holds.clear();
                 holds_dropped = 0;
+                slow_shows.clear();
                 let mut st = status.write().expect("status lock");
                 // The keeper owns `specialized`: it reads the live target list.
                 st.display = DisplayState {
