@@ -109,6 +109,8 @@ fn main() {
     }
 
     let api_status = status.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let api_stop = stop.clone();
     let port = cfg.api.port;
     wb_service::priority::spawn_helper("api", move || {
         let rt = wb_service::priority::helper_runtime(2).expect("tokio runtime");
@@ -117,7 +119,9 @@ fn main() {
             match tokio::net::TcpListener::bind(addr).await {
                 Ok(l) => {
                     info!(%addr, "status api listening");
-                    if let Err(e) = axum::serve(l, wb_service::api::router(api_status)).await {
+                    let app = wb_service::api::router(api_status, api_stop)
+                        .into_make_service_with_connect_info::<std::net::SocketAddr>();
+                    if let Err(e) = axum::serve(l, app).await {
                         error!(err = ?e, "status api stopped");
                     }
                 }
@@ -127,9 +131,15 @@ fn main() {
     })
     .expect("api thread");
 
-    if let Err(e) = wb_service::engine::run(cfg, status, reacquire) {
-        error!(err = ?e, "engine failed to start");
-        std::process::exit(1);
+    match wb_service::engine::run(cfg, status, reacquire, stop) {
+        Ok(()) => {
+            info!("engine stopped gracefully, exiting");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            error!(err = ?e, "engine failed to start");
+            std::process::exit(1);
+        }
     }
 }
 

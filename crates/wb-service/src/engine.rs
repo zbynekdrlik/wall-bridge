@@ -168,7 +168,15 @@ fn display_state(cfg: &Config, scanout: Option<&Scanout>) -> DisplayState {
 
 /// Runs forever. Only a broken D3D device at startup returns an error.
 /// `reacquire`: the keeper re-specialized the wall; drop the target and acquire it again.
-pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()> {
+/// Runs until `stop` is set (graceful stop, `POST /api/stop`), then returns `Ok(())` with the
+/// Spout texture closed and the display target dropped; never inside a probe, so Arena's
+/// SpoutAccessMutex is never held at exit (#20).
+pub fn run(
+    cfg: Config,
+    status: Shared,
+    reacquire: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+) -> Result<()> {
     unsafe {
         timeBeginPeriod(1);
     }
@@ -185,6 +193,11 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
     let mut attempt = 0usize;
 
     loop {
+        if stop.load(Ordering::SeqCst) {
+            reader.close();
+            info!("graceful stop: before acquiring the wall");
+            return Ok(());
+        }
         // 1) Acquire the wall.
         let mut scanout = match wb_scanout::open(&cfg.wall.monitor, &device) {
             Ok(s) => {
@@ -259,6 +272,12 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
 
         // 2) Run on the wall's vblanks until the target is lost.
         loop {
+            // Between probes: Arena's mutex is not held here.
+            if stop.load(Ordering::SeqCst) {
+                reader.close();
+                info!(presents, "graceful stop: Spout closed, releasing the wall");
+                return Ok(());
+            }
             if let Err(e) = scanout.wait_vblank() {
                 error!(err = ?e, "wait for vblank failed, re-acquiring the display");
                 break;

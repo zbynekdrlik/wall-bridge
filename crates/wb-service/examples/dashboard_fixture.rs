@@ -48,10 +48,18 @@ async fn main() {
         },
         warnings: vec![],
     };
-    let app = wb_service::api::router(Arc::new(RwLock::new(status)));
+    let app = wb_service::api::router(
+        Arc::new(RwLock::new(status)),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .expect("bind");
     println!("listening on {port}");
-    axum::serve(listener, app).await.expect("serve");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("serve");
 }

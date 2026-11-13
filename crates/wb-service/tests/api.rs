@@ -1,7 +1,7 @@
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use axum::extract::ConnectInfo;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -43,7 +43,10 @@ fn status() -> Status {
 }
 
 async fn get(path: &str) -> (StatusCode, String) {
-    let app = router(Arc::new(RwLock::new(status())), Arc::new(AtomicBool::new(false)));
+    let app = router(
+        Arc::new(RwLock::new(status())),
+        Arc::new(AtomicBool::new(false)),
+    );
     let res = app
         .oneshot(Request::get(path).body(Body::empty()).unwrap())
         .await
@@ -92,14 +95,20 @@ async fn stop_from(peer: &str) -> (StatusCode, bool) {
 async fn stop_from_loopback_asks_the_engine_to_stop() {
     // The installer asks for a graceful stop so the engine never dies holding Arena's
     // SpoutAccessMutex (13.11. 04:30Z: an abandoned mutex Arena kept, wall black, #20).
-    assert_eq!(stop_from("127.0.0.1:50000").await, (StatusCode::ACCEPTED, true));
+    assert_eq!(
+        stop_from("127.0.0.1:50000").await,
+        (StatusCode::ACCEPTED, true)
+    );
     assert_eq!(stop_from("[::1]:50000").await, (StatusCode::ACCEPTED, true));
 }
 
 #[tokio::test]
 async fn stop_from_the_lan_is_refused() {
     // The API listens on 0.0.0.0 for the dashboard; nobody on the LAN may stop the wall.
-    assert_eq!(stop_from("10.77.9.195:50000").await, (StatusCode::FORBIDDEN, false));
+    assert_eq!(
+        stop_from("10.77.9.195:50000").await,
+        (StatusCode::FORBIDDEN, false)
+    );
 }
 
 #[tokio::test]

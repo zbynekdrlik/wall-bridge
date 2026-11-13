@@ -13,6 +13,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'WallBridge.Install.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'WallBridge.Update.psm1') -Force
+$apiPort = Get-ApiPort (Join-Path $Root 'config.toml')
 
 $exeSrc = Join-Path $Source 'wall-bridge.exe'
 if (-not (Test-Path $exeSrc)) { throw "no wall-bridge.exe in $Source" }
@@ -20,7 +22,7 @@ $version = Get-ExeVersion $exeSrc
 Write-InstallLog $Root "installing $version from $Source"
 
 $dir = Invoke-WithEngineRestore -Root $Root -Action {
-    Stop-Engines $Root
+    Stop-Engines $Root -Port $apiPort
     $dir = Install-AppFiles -Source $Source -Root $Root -Version $version
     $exe = Join-Path $dir 'wall-bridge.exe'
     Register-EngineTask -Exe $exe -User $User
