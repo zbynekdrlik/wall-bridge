@@ -14,6 +14,7 @@ use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
 use wb_core::pacing::{Pacer, Show};
 use wb_core::sender::{SenderAction, SenderWatch};
+use wb_core::slow_show::{SlowShowRing, SLOW_SHOW_RING_LEN};
 use wb_core::spout_wire::Content;
 use wb_core::status::{specialized_from_targets, DisplayState};
 use wb_core::timefmt::hms_utc;
@@ -191,6 +192,9 @@ pub fn run(
     let mut reader = Reader::new(&device, &cfg.sender.name)?;
     let mut watch = SenderWatch::new(&cfg.sender.name);
     let started = Instant::now();
+    // Every present of 8 ms or more, read on /api/status (#22). Kept across re-acquires;
+    // `present` restarts at 1 with each acquire.
+    let mut slow_ring = SlowShowRing::new(SLOW_SHOW_RING_LEN);
     let mut attempt = 0usize;
 
     loop {
@@ -302,6 +306,7 @@ pub fn run(
                 let us = t.elapsed().as_micros() as u64;
                 presents += 1;
                 show_us_max = show_us_max.max(us);
+                slow_ring.record(t_ms, us, presents);
                 if us >= SLOW_SHOW_US && slow_shows.len() < MAX_SLOW {
                     slow_shows.push((t_ms, us, presents));
                 }
@@ -474,6 +479,8 @@ pub fn run(
                 };
                 st.sender = sender;
                 st.pacing = w;
+                st.slow_shows = slow_ring.snapshot();
+                st.slow_shows_total = slow_ring.total();
                 st.uptime_s = started.elapsed().as_secs();
                 st.state = evaluate(&Inputs {
                     display: &st.display,

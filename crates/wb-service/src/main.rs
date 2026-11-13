@@ -90,6 +90,8 @@ fn main() {
         sender: wb_core::sender::SenderWatch::new(&cfg.sender.name).state(0),
         pacing: Default::default(),
         warnings: vec![],
+        slow_shows: vec![],
+        slow_shows_total: 0,
     }));
 
     if let Err(e) = wb_service::priority::raise_process() {

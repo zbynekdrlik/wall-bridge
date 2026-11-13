@@ -39,6 +39,8 @@ fn status() -> Status {
         },
         pacing: PacingWindow::default(),
         warnings: vec![],
+        slow_shows: vec![],
+        slow_shows_total: 0,
     }
 }
 

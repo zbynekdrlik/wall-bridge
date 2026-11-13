@@ -2,6 +2,7 @@ use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs, Reason, State};
 use wb_core::pacing::PacingWindow;
 use wb_core::sender::SenderState;
+use wb_core::slow_show::SlowShow;
 use wb_core::status::{DisplayState, Status, TopologyState};
 
 fn sender(connected: bool, age: Option<u64>) -> SenderState {
@@ -114,6 +115,12 @@ fn status_json_shape() {
         sender: sender(false, None),
         pacing: window(0),
         warnings: vec!["nvidia driver 590.1 != 581.57".into()],
+        slow_shows: vec![SlowShow {
+            at_ms: 1_794_582_766_123,
+            us: 9_500,
+            present: 4,
+        }],
+        slow_shows_total: 3,
     };
     let v: serde_json::Value = serde_json::to_value(&st).unwrap();
     // JSON object key order carries no meaning: compare the key set.
@@ -122,7 +129,16 @@ fn status_json_shape() {
     assert_eq!(
         keys,
         vec![
-            "display", "pacing", "reasons", "sender", "state", "topology", "uptime_s", "version",
+            "display",
+            "pacing",
+            "reasons",
+            "sender",
+            "slow_shows",
+            "slow_shows_total",
+            "state",
+            "topology",
+            "uptime_s",
+            "version",
             "warnings"
         ]
     );
@@ -131,6 +147,9 @@ fn status_json_shape() {
     assert_eq!(v["sender"]["last_picture_age_ms"], serde_json::Value::Null);
     assert_eq!(v["display"]["hz"], 59.978);
     assert_eq!(v["pacing"]["missed_vblanks"], 0);
+    assert_eq!(v["slow_shows"][0]["at_utc"], "15:12:46.123");
+    assert_eq!(v["slow_shows"][0]["us"], 9_500);
+    assert_eq!(v["slow_shows_total"], 3);
 }
 
 #[test]
