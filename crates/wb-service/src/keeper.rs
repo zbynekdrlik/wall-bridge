@@ -293,7 +293,8 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) {
                 cfg.wall.monitor
             ));
         }
-        if h.read_errors >= 3 {
+        // With the live wall span a read error is expected (NVAPI -130, #19): no warning.
+        if h.read_errors >= 3 && !span_live {
             warnings.push(format!(
                 "Surround layout unreadable ({} reads)",
                 h.read_errors

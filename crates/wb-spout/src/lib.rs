@@ -4,6 +4,7 @@
 
 use std::ffi::CString;
 use wb_core::sender::SenderSeen;
+use wb_core::spout_lock::LockGate;
 use wb_core::spout_wire::{self, TextureInfo, INFO_LEN, SAMPLES};
 use windows::core::{Error, Result, PCSTR, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, E_FAIL, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
@@ -83,6 +84,11 @@ pub struct Reader {
     prev_sig: Vec<u8>,
     /// Probe boxes are queued on the GPU and not read back yet.
     pending: bool,
+    /// Bypasses Arena's mutex when it stays unobtainable (an abandoned, kept owner, #20).
+    gate: LockGate,
+    /// Reads made without the mutex since the last `take_bypassed`.
+    bypassed: u64,
+    epoch: std::time::Instant,
 }
 
 impl Reader {
@@ -111,6 +117,9 @@ impl Reader {
             open: None,
             prev_sig: vec![],
             pending: false,
+            gate: LockGate::default(),
+            bypassed: 0,
+            epoch: std::time::Instant::now(),
         })
     }
 
@@ -161,6 +170,7 @@ impl Reader {
         });
         self.prev_sig.clear();
         self.pending = false;
+        self.gate = LockGate::default();
         Ok(())
     }
 
@@ -197,17 +207,30 @@ impl Reader {
         let Some(o) = &self.open else {
             return Ok(Probe::Same);
         };
-        let lock = |m: Option<HANDLE>| -> bool {
-            match m {
-                Some(m) => {
-                    let r = unsafe { WaitForSingleObject(m, max_wait_ms) };
-                    r == WAIT_OBJECT_0 || r == WAIT_ABANDONED
-                }
-                None => true,
+        let now = self.epoch.elapsed().as_millis() as u64;
+        let gate = &mut self.gate;
+        let bypassed = &mut self.bypassed;
+        // Some(true) = locked (release after), Some(false) = go on without the mutex,
+        // None = timed out, try again later.
+        let mut lock = |m: Option<HANDLE>| -> Option<bool> {
+            let Some(m) = m else {
+                return Some(false);
+            };
+            let r = unsafe { WaitForSingleObject(m, gate.wait_ms(max_wait_ms, now)) };
+            if r == WAIT_OBJECT_0 || r == WAIT_ABANDONED {
+                gate.on_locked();
+                return Some(true);
+            }
+            gate.on_timeout(now);
+            if gate.bypass(now) {
+                *bypassed += 1;
+                Some(false)
+            } else {
+                None
             }
         };
-        let unlock = |m: Option<HANDLE>| {
-            if let Some(m) = m {
+        let unlock = |m: Option<HANDLE>, held: bool| {
+            if let (Some(m), true) = (m, held) {
                 unsafe {
                     let _ = ReleaseMutex(m);
                 }
@@ -215,9 +238,9 @@ impl Reader {
         };
 
         if !self.pending {
-            if !lock(o.mutex) {
+            let Some(held) = lock(o.mutex) else {
                 return Ok(Probe::LockTimeout);
-            }
+            };
             for (k, (x, y)) in spout_wire::sample_boxes(o.width, o.height)
                 .into_iter()
                 .enumerate()
@@ -244,7 +267,7 @@ impl Reader {
                 };
             }
             unsafe { ctx.Flush() };
-            unlock(o.mutex);
+            unlock(o.mutex, held);
             self.pending = true;
         }
 
@@ -279,10 +302,10 @@ impl Reader {
             return Ok(Probe::Same);
         }
 
-        if !lock(o.mutex) {
+        let Some(held) = lock(o.mutex) else {
             // prev_sig stays: the next probe sees the change again.
             return Ok(Probe::LockTimeout);
-        }
+        };
         let dst = dst();
         unsafe {
             let mut dd = D3D11_TEXTURE2D_DESC::default();
@@ -302,9 +325,19 @@ impl Reader {
             }
             ctx.Flush();
         }
-        unlock(o.mutex);
+        unlock(o.mutex, held);
         self.prev_sig = sig;
         Ok(Probe::New)
+    }
+
+    /// Reads made without Arena's mutex since the last call (a stuck mutex, #20).
+    pub fn take_bypassed(&mut self) -> u64 {
+        std::mem::take(&mut self.bypassed)
+    }
+
+    /// What the last new picture showed (black, one colour, image), from its probe boxes.
+    pub fn last_content(&self) -> spout_wire::Content {
+        spout_wire::classify_sig(&self.prev_sig)
     }
 }
 

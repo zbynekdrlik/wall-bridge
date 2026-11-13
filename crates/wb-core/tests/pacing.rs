@@ -241,3 +241,94 @@ fn arrival_half_a_period_from_the_mean_goes_forward() {
     }
     assert_eq!(p.on_vblank(), Show::New(x)); // vb 5
 }
+
+/// Drives 30 fps arrivals, but none in vblanks [gap_from, gap_to). Returns the vblank
+/// indices (1-based, as `on_vblank` counts them) at which `take_long_hold` reported a hold,
+/// with its length.
+fn holds_with_gap(gap_from: u64, gap_to: u64, vblanks: u64) -> Vec<(u64, u64)> {
+    let mut p = Pacer::new(5);
+    let mut out = vec![];
+    for vb in 0..vblanks {
+        p.on_vblank();
+        if let Some(len) = p.take_long_hold() {
+            out.push((p.vb_index(), len));
+        }
+        if vb % 2 == 0 && !(gap_from..gap_to).contains(&vb) {
+            p.arrive(0.3);
+        }
+    }
+    out
+}
+
+#[test]
+fn long_hold_is_reported_once_with_its_length() {
+    // Steady 30 fps = 2-vblank runs; a 60-vblank gap in arrivals gives one run of 62.
+    let h = holds_with_gap(200, 260, 400);
+    assert_eq!(h.len(), 1, "holds {h:?}");
+    let (at, len) = h[0];
+    assert_eq!(len, 62);
+    // Reported at the vblank that ends it: the first picture after the gap, 2 vblanks later.
+    assert_eq!(at, 263);
+}
+
+#[test]
+fn short_runs_report_no_hold() {
+    // A 14-vblank gap gives a 16-vblank run (>= 9): reported. A 6-vblank gap gives an
+    // 8-vblank run: below the threshold, not reported.
+    assert_eq!(holds_with_gap(100, 106, 300).len(), 0);
+    assert_eq!(holds_with_gap(100, 114, 300), vec![(117, 16)]);
+}
+
+#[test]
+fn long_hold_is_taken_only_once() {
+    // First picture shown at vb 3, second at vb 43: a 40-vblank run closed at vb 43.
+    let mut p2 = Pacer::new(5);
+    let mut seen = vec![];
+    for vb in 0..100u64 {
+        p2.on_vblank();
+        if let Some(l) = p2.take_long_hold() {
+            seen.push((p2.vb_index(), l));
+        }
+        assert_eq!(
+            p2.take_long_hold(),
+            None,
+            "taken twice at {}",
+            p2.vb_index()
+        );
+        if vb == 0 || vb == 40 {
+            p2.arrive(0.3);
+        }
+    }
+    assert_eq!(seen, vec![(43, 40)]);
+}
+
+#[test]
+fn hms_utc_formats_unix_ms() {
+    use wb_core::timefmt::hms_utc;
+    // 2026-11-13T02:02:05.372Z
+    assert_eq!(hms_utc(1_794_535_325_372), "02:02:05.372");
+    assert_eq!(hms_utc(0), "00:00:00.000");
+    assert_eq!(hms_utc(86_399_999), "23:59:59.999");
+}
+
+/// Length of the hold between two pictures arriving `gap` vblanks apart, if reported.
+fn hold_between(gap: u64) -> Option<u64> {
+    let mut p = Pacer::new(5);
+    let mut got = None;
+    for vb in 0..gap + 10 {
+        p.on_vblank();
+        if let Some(l) = p.take_long_hold() {
+            got = Some(l);
+        }
+        if vb == 0 || vb == gap {
+            p.arrive(0.3);
+        }
+    }
+    got
+}
+
+#[test]
+fn long_hold_threshold_is_nine_vblanks() {
+    assert_eq!(hold_between(8), None);
+    assert_eq!(hold_between(9), Some(9));
+}

@@ -14,6 +14,8 @@ const PHASE_ALPHA: f64 = 0.03;
 const INTERVAL_ALPHA: f64 = 0.05;
 /// Arrival histogram size; runs of 9 or more vblanks share the last bucket.
 const RUN_BUCKETS: usize = 9;
+/// A run this long (vblanks) is a hold worth logging on its own, with its time (#15).
+pub const LONG_HOLD_VB: u64 = RUN_BUCKETS as u64;
 
 /// What the engine puts on the wall at a vblank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +59,8 @@ pub struct Pacer {
     interval_vb: f64,
     last_arrival_vb: Option<f64>,
     run: u64,
+    /// Length of a run >= LONG_HOLD_VB closed at the last `on_vblank`, until taken.
+    long_hold: Option<u64>,
     win: PacingWindow,
 }
 
@@ -73,6 +77,7 @@ impl Pacer {
             interval_vb: 2.0,
             last_arrival_vb: None,
             run: 0,
+            long_hold: None,
             win: PacingWindow::default(),
         }
     }
@@ -82,8 +87,15 @@ impl Pacer {
         self.vb_index
     }
 
+    /// The length (vblanks) of a hold of LONG_HOLD_VB or more that the last `on_vblank` ended
+    /// with a new picture; `None` otherwise or once taken.
+    pub fn take_long_hold(&mut self) -> Option<u64> {
+        self.long_hold.take()
+    }
+
     /// Call right after each vblank. Returns what to put on the wall for the next refresh.
     pub fn on_vblank(&mut self) -> Show {
+        self.long_hold = None;
         self.vb_index += 1;
         self.win.vblanks += 1;
         let mut take = None;
@@ -180,6 +192,9 @@ impl Pacer {
         // nothing can be due at the very first vblank (show delay is 2).
         let i = (self.run.clamp(1, RUN_BUCKETS as u64) - 1) as usize;
         self.win.runs[i] += 1;
+        if self.run >= LONG_HOLD_VB {
+            self.long_hold = Some(self.run);
+        }
         self.run = 0;
     }
 }

@@ -77,3 +77,62 @@ fn sample_boxes_clamp_on_tiny_frames() {
         assert!(x <= 8 && y == 0, "({x},{y})");
     }
 }
+
+mod held_content {
+    use wb_core::spout_wire::{classify_sig, Content};
+
+    /// BGRA bytes of `n` pixels, all of colour (b, g, r).
+    fn px(n: usize, b: u8, g: u8, r: u8) -> Vec<u8> {
+        (0..n).flat_map(|_| [b, g, r, 255]).collect()
+    }
+
+    #[test]
+    fn all_black_is_black() {
+        assert_eq!(classify_sig(&px(64, 0, 0, 0)), Content::Black);
+        // Video black with a little noise, at the threshold.
+        let mut s = px(64, 16, 16, 16);
+        s[0] = 0;
+        assert_eq!(classify_sig(&s), Content::Black);
+    }
+
+    #[test]
+    fn one_colour_above_black_is_solid() {
+        assert_eq!(classify_sig(&px(64, 17, 17, 17)), Content::Solid);
+        assert_eq!(classify_sig(&px(64, 200, 10, 10)), Content::Solid);
+        // Noise of up to 4 per channel still counts as one colour.
+        let mut s = px(64, 100, 100, 100);
+        s[4] = 102;
+        s[8] = 98;
+        assert_eq!(classify_sig(&s), Content::Solid);
+    }
+
+    #[test]
+    fn varied_content_is_image() {
+        let mut s = px(64, 100, 100, 100);
+        s[4] = 105;
+        assert_eq!(classify_sig(&s), Content::Image);
+        let mut s = px(64, 0, 0, 0);
+        s[2] = 17; // one red value above black
+        assert_eq!(classify_sig(&s), Content::Image);
+    }
+
+    #[test]
+    fn alpha_is_ignored_and_empty_is_unknown() {
+        let mut s = px(4, 0, 0, 0);
+        s[3] = 0;
+        s[7] = 128;
+        assert_eq!(classify_sig(&s), Content::Black);
+        assert_eq!(classify_sig(&[]), Content::Unknown);
+        assert_eq!(classify_sig(&[0, 0, 0]), Content::Unknown);
+        // A single pixel is enough.
+        assert_eq!(classify_sig(&px(1, 0, 0, 0)), Content::Black);
+    }
+
+    #[test]
+    fn labels() {
+        assert_eq!(Content::Black.label(), "black");
+        assert_eq!(Content::Solid.label(), "solid");
+        assert_eq!(Content::Image.label(), "image");
+        assert_eq!(Content::Unknown.label(), "?");
+    }
+}

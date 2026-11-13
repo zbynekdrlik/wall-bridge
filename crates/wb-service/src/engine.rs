@@ -14,7 +14,9 @@ use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
 use wb_core::pacing::{Pacer, Show};
 use wb_core::sender::{SenderAction, SenderWatch};
+use wb_core::spout_wire::Content;
 use wb_core::status::{specialized_from_targets, DisplayState};
+use wb_core::timefmt::hms_utc;
 use wb_core::vblank::{missed_between, percentiles_ms};
 use wb_scanout::Scanout;
 use wb_spout::{Probe, Reader};
@@ -165,9 +167,17 @@ fn display_state(cfg: &Config, scanout: Option<&Scanout>) -> DisplayState {
     }
 }
 
-/// Runs forever. Only a broken D3D device at startup returns an error.
+/// Only a broken D3D device at startup returns an error.
 /// `reacquire`: the keeper re-specialized the wall; drop the target and acquire it again.
-pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()> {
+/// Runs until `stop` is set (graceful stop, `POST /api/stop`), then returns `Ok(())` with the
+/// Spout texture closed and the display target dropped; never inside a probe, so Arena's
+/// SpoutAccessMutex is never held at exit (#20).
+pub fn run(
+    cfg: Config,
+    status: Shared,
+    reacquire: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+) -> Result<()> {
     unsafe {
         timeBeginPeriod(1);
     }
@@ -184,6 +194,11 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
     let mut attempt = 0usize;
 
     loop {
+        if stop.load(Ordering::SeqCst) {
+            reader.close();
+            info!("graceful stop: before acquiring the wall");
+            return Ok(());
+        }
         // 1) Acquire the wall.
         let mut scanout = match wb_scanout::open(&cfg.wall.monitor, &device) {
             Ok(s) => {
@@ -205,26 +220,47 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     display_state(&cfg, None),
                     started.elapsed().as_secs(),
                 );
-                std::thread::sleep(std::time::Duration::from_secs(wait));
+                sleep_unless_stopped(&stop, wait);
                 continue;
             }
         };
         let period_us = (1_000_000.0 / scanout.refresh.max(1.0)) as u64;
         let guard_us = cfg.pacing.guard_us;
+        let ring_t = Instant::now();
         let slots = match ring(&device, cfg.pacing.ring, scanout.width, scanout.height) {
             Ok(s) => s,
             Err(e) => {
                 error!(err = ?e, "ring allocation failed, re-acquiring");
-                std::thread::sleep(std::time::Duration::from_secs(REOPEN_BACKOFF_S[1]));
+                sleep_unless_stopped(&stop, REOPEN_BACKOFF_S[1]);
                 continue;
             }
         };
         clear(&device, &ctx, &slots);
+        info!(
+            slots = cfg.pacing.ring,
+            ms = ring_t.elapsed().as_millis() as u64,
+            "picture ring allocated and cleared"
+        );
         let mut pacer = Pacer::new(cfg.pacing.ring);
         let display = display_state(&cfg, Some(&scanout));
         // Publish at once: the keeper and the updater's health check read it.
         publish_state(&status, display.clone(), started.elapsed().as_secs());
         let mut arrivals: Vec<u64> = vec![];
+        // Holds of LONG_HOLD_VB+ vblanks in this window: (Unix ms the new picture ended it,
+        // length in vblanks). Preallocated: no allocation on the vblank path (#15).
+        const MAX_HOLDS: usize = 32;
+        let mut holds: Vec<(u64, u64, Content)> = Vec::with_capacity(MAX_HOLDS);
+        // What each ring slot holds (set when a picture is copied into it), and the slot on the
+        // wall: a hold is tagged with the slot that stayed on the wall (#15).
+        let mut slot_content = vec![Content::Unknown; slots.len()];
+        let mut on_wall: Option<usize> = None;
+        let mut holds_dropped = 0u64;
+        // Presents slower than SLOW_SHOW_US: (Unix ms at its start, µs, present number since
+        // the target was acquired), so a box-wide stall can be timed exactly (#20).
+        const SLOW_SHOW_US: u64 = 20_000;
+        const MAX_SLOW: usize = 16;
+        let mut slow_shows: Vec<(u64, u64, u64)> = Vec::with_capacity(MAX_SLOW);
+        let mut presents = 0u64;
         let mut missed = 0u64;
         let mut lock_timeouts = 0u64;
         // Per-window maxima (µs) of the steps on the vblank path, to see where time goes.
@@ -237,6 +273,12 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
 
         // 2) Run on the wall's vblanks until the target is lost.
         loop {
+            // Between probes: Arena's mutex is not held here.
+            if stop.load(Ordering::SeqCst) {
+                reader.close();
+                info!(presents, "graceful stop: Spout closed, releasing the wall");
+                return Ok(());
+            }
             if let Err(e) = scanout.wait_vblank() {
                 error!(err = ?e, "wait for vblank failed, re-acquiring the display");
                 break;
@@ -248,13 +290,29 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
             }
             last_vblank = Some(wake);
 
+            let on_wall_before = on_wall;
             if let Show::New(slot) = pacer.on_vblank() {
+                on_wall = Some(slot);
                 let t = Instant::now();
+                let t_ms = now_ms();
                 if let Err(e) = scanout.show(&ctx, &slots[slot]) {
                     error!(err = ?e, "scanout show failed, re-acquiring the display");
                     break;
                 }
-                show_us_max = show_us_max.max(t.elapsed().as_micros() as u64);
+                let us = t.elapsed().as_micros() as u64;
+                presents += 1;
+                show_us_max = show_us_max.max(us);
+                if us >= SLOW_SHOW_US && slow_shows.len() < MAX_SLOW {
+                    slow_shows.push((t_ms, us, presents));
+                }
+            }
+            if let Some(len) = pacer.take_long_hold() {
+                if holds.len() < MAX_HOLDS {
+                    let held = on_wall_before.map_or(Content::Unknown, |s| slot_content[s]);
+                    holds.push((now_ms(), len, held));
+                } else {
+                    holds_dropped += 1;
+                }
             }
 
             // Sender check every N vblanks.
@@ -286,6 +344,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                                 );
                                 if reader.size() != Some((display.width, display.height)) {
                                     clear(&device, &ctx, &slots);
+                                    slot_content.fill(Content::Unknown);
                                 }
                             }
                             Err(e) => {
@@ -309,6 +368,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
             let budget = std::time::Duration::from_micros(period_us.saturating_sub(guard_us));
             while wake.elapsed() < budget {
                 let mut arrived_off_us = None;
+                let mut arrived_slot = None;
                 let t = Instant::now();
                 // Never wait for Arena's mutex past the guard.
                 let left_ms = budget.saturating_sub(wake.elapsed()).as_millis() as u32;
@@ -316,6 +376,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     let off_us = wake.elapsed().as_micros() as u64;
                     arrived_off_us = Some(off_us);
                     let slot = pacer.arrive(off_us as f64 / period_us as f64);
+                    arrived_slot = Some(slot);
                     slots[slot].clone()
                 });
                 probe_us_max = probe_us_max.max(t.elapsed().as_micros() as u64);
@@ -325,6 +386,9 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                             arrivals.push(us);
                         }
                         watch.picture(now_ms());
+                        if let Some(s) = arrived_slot {
+                            slot_content[s] = reader.last_content();
+                        }
                         break;
                     }
                     Ok(Probe::Same) => {
@@ -351,6 +415,29 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                 w.missed_vblanks = missed;
                 (w.arrival_ms_p50, w.arrival_ms_p90) = percentiles_ms(&mut arrivals);
                 let sender = watch.state(now_ms());
+                // Each hold as "<start>-<end>/<vblanks>/<black|solid|image>" in UTC; start = end -
+                // length; the content says whether a still picture explains it (#15). Both are
+                // wall times; Arena's own pictures came ~SHOW_DELAY (2 vblanks) earlier.
+                let period_ms = period_us as f64 / 1000.0;
+                let holds_txt = holds
+                    .iter()
+                    .map(|&(end, len, content)| {
+                        let start = end.saturating_sub((len as f64 * period_ms) as u64);
+                        format!(
+                            "{}-{}/{len}/{}",
+                            hms_utc(start),
+                            hms_utc(end),
+                            content.label()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                // Each slow present as "<UTC start>/<µs>@<present number since acquire>".
+                let slow_txt = slow_shows
+                    .iter()
+                    .map(|&(at, us, n)| format!("{}/{us}@{n}", hms_utc(at)))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 info!(
                     vblanks = w.vblanks,
                     new = w.new,
@@ -370,8 +457,15 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     arrival_ms_p90 = w.arrival_ms_p90,
                     sender_connected = sender.connected,
                     picture_age_ms = ?sender.last_picture_age_ms,
+                    holds = %holds_txt,
+                    holds_dropped,
+                    slow_shows = %slow_txt,
+                    lock_bypassed = reader.take_bypassed(),
                     "window"
                 );
+                holds.clear();
+                holds_dropped = 0;
+                slow_shows.clear();
                 let mut st = status.write().expect("status lock");
                 // The keeper owns `specialized`: it reads the live target list.
                 st.display = DisplayState {
@@ -405,5 +499,14 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
             started.elapsed().as_secs(),
         );
         std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+/// Sleeps `secs`, in 100 ms steps, returning early when a graceful stop is requested, so the
+/// installer's 10 s grace is enough while the wall is not acquired (TVs off, #20).
+fn sleep_unless_stopped(stop: &AtomicBool, secs: u64) {
+    let end = Instant::now() + std::time::Duration::from_secs(secs);
+    while Instant::now() < end && !stop.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }

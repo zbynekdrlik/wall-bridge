@@ -11,6 +11,7 @@ paths:
 
 - **Session:** Spout names (`SpoutSenderNames`, the 280 B sender mapping, `<name>_SpoutAccessMutex`) are session-local.
   - A SYSTEM / session 0 process sees `senders: []`, so the engine must run in `Resolume`'s session 1 (`docs/spikes/2026-10-session0.md`).
+- **NVAPI -130 with the whole wall specialized (13.11., #19):** while the 1x3 wall is specialized and scanned out (TVs on), `EnumDisplayGrids(count)` returns -130 (NVAPI_OUT_OF_MEMORY) on every read, in any process. With the TVs off it reads fine. This is not a driver fault; a reboot does not help. The keeper counts a read error plus the live span as the whole wall.
 - **NVAPI and specialization:** `NvAPI_Mosaic_EnumDisplayGrids` lists NO grid for a span removed from the desktop.
   - Only the grabber (0x80061081) shows up.
   - Do not read "no 1x3 grid" as a collapse; the keeper uses the engine's live target instead.
@@ -22,6 +23,7 @@ paths:
 - **Quitting Arena:** a graceful quit raises "Do you really want to quit? All unsaved progress will be lost" (Quit / Cancel / Save & Quit).
   - Never answer it for the operator. Cancel with Escape on the dialog.
   - Arena reads its Advanced Output preset at start and does not rewrite it on quit.
+- **Arena's own log:** `C:\Users\Resolume\AppData\Local\Resolume Arena\Resolume Arena log.txt` (local time, UTC+1). It is rewritten at every Arena start, so it holds nothing from before the last launch (no NDI history, 9.11.). Read it with a shared `FileStream`.
 - **GUI clicks in Arena via MCP:** risky, a misclick can start a clip (clips only from the owner's Stream Deck). Prefer file / REST changes.
 - **MCP Shell:** output over ~70 kB is cut off, so filter on the PC.
   - For files and secrets use `~/.claude/work-products/snv_mcp_shell.py` (talks to the gateway directly; `{ENV:NAME}` placeholders keep secrets off the transcript).
@@ -52,3 +54,9 @@ paths:
   - A task started at Task Scheduler's default priority (7) runs BelowNormal. The engine therefore raises itself to High, and the installer sets `-Priority 1`.
   - The vblank thread runs TIME_CRITICAL (15) and the API/keeper threads BELOW_NORMAL. Songplayer reads Dante `late_bins` across any priority change: audio wins, so revert first if it worsens.
 - **SNV runner jobs** run in session 1 as `Resolume`, elevated: they can run `spec_toggle.ps1` and see Arena and Spout directly (`docs/runner.md`).
+- **Never kill the engine (13.11., #20):** a kill inside a Spout probe leaves `Arena - Screen 2_SpoutAccessMutex` abandoned. Arena (Spout 2.007.017) takes it and never releases it, so every other reader is locked out (wall black 04:30–04:38Z; SongPlayer's SpoutGL gate blind).
+  - Stop it gracefully: `POST http://127.0.0.1:8930/api/stop` with header `X-WallBridge-Stop: 1` (loopback only). It exits 0 in ~60 ms. The installer does this first and disables the watchdog meanwhile.
+  - Already stuck: the engine reads past it (`lock_bypassed>0`). Only an Arena relaunch frees it (songplayer's call); the engine then takes WAIT_ABANDONED and releases it.
+- **Engine start costs (13.11., #20):** the Display.Core acquire takes ~1.7 s and blocks D3D11 hardware video decode on the same GPU (SongPlayer's audio underran until songplayer#318). Present #2 after the acquire takes ~120–137 ms. Give songplayer ≥5 min notice before any engine restart, including a dev push (snv-e2e reinstalls on production).
+- **snv-e2e needs the wall:** with the TVs off it fails on `display_not_acquired`. Press TELKY on before the dev push, and off when the job is green. After a host reboot the TELKY relay is off (0 W) and panels B/C are missing until it is on again.
+- **Clean host reboot (13.11.):** songplayer quiesces Spout and stops SongPlayer, and turns the AHK safe loop off (Alt+Q). Then wall-bridge graceful stop, OBS normal close (check that it is not streaming), Arena Composition > Save and Save & Quit, then `shutdown /r`. Everything comes back by itself at logon; Arena starts with no clip running.
