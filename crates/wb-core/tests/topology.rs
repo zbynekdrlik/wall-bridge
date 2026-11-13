@@ -519,3 +519,62 @@ fn intact_wall_and_live_span_report_nothing_missing() {
     );
     assert!(h.missing.is_empty());
 }
+
+/// 13.11. 09:03Z (and 12.11. 16:13Z – 13.11. 08:55Z, 30.10.): with the whole wall specialized
+/// and scanned out, NVAPI's EnumDisplayGrids(count) returns -130 on every read. With the TVs
+/// off it reads fine. The live span proves the wall is whole, so the keeper must report a match
+/// (the snv-e2e failed on `topology_mismatch` for this alone, #19).
+const MINUS_130: &str = "EnumDisplayGrids(count) = -130";
+
+#[test]
+fn unreadable_layout_with_a_live_span_matches() {
+    let mut h = KeeperHistory::default();
+    for t in 0..3 {
+        assert_eq!(
+            decide(
+                &def(),
+                Err(MINUS_130.into()),
+                true,
+                true,
+                &mut h,
+                t * 10_000
+            ),
+            KeeperAction::None
+        );
+        assert!(h.matches, "read {t}: the live span is the whole wall");
+    }
+    assert_eq!(h.read_errors, 3, "the errors are still counted");
+}
+
+#[test]
+fn unreadable_layout_with_a_live_span_clears_failures_after_3_reads() {
+    let mut h = KeeperHistory::default();
+    let (_, t) = confirmed(&collapsed(), &mut h, 0);
+    h.restore_finished(t, false);
+    assert_eq!(h.failures(t), 1);
+    let mut at = t;
+    for _ in 0..2 {
+        at += 10_000;
+        decide(&def(), Err(MINUS_130.into()), true, true, &mut h, at);
+    }
+    assert_eq!(h.failures(at), 1, "two healthy reads clear nothing");
+    at += 10_000;
+    decide(&def(), Err(MINUS_130.into()), true, true, &mut h, at);
+    assert_eq!(h.failures(at), 0, "the third in a row clears");
+}
+
+#[test]
+fn unreadable_layout_without_a_live_span_is_no_match() {
+    let mut h = KeeperHistory::default();
+    for t in 0..3 {
+        decide(
+            &def(),
+            Err(MINUS_130.into()),
+            false,
+            true,
+            &mut h,
+            t * 10_000,
+        );
+    }
+    assert!(!h.matches);
+}
