@@ -7,3 +7,4 @@ pub mod spout_wire;
 pub mod status;
 pub mod topology;
 pub mod vblank;
+pub mod spout_lock;
