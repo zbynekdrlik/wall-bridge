@@ -167,7 +167,7 @@ fn display_state(cfg: &Config, scanout: Option<&Scanout>) -> DisplayState {
     }
 }
 
-/// Runs forever. Only a broken D3D device at startup returns an error.
+/// Only a broken D3D device at startup returns an error.
 /// `reacquire`: the keeper re-specialized the wall; drop the target and acquire it again.
 /// Runs until `stop` is set (graceful stop, `POST /api/stop`), then returns `Ok(())` with the
 /// Spout texture closed and the display target dropped; never inside a probe, so Arena's
@@ -250,8 +250,6 @@ pub fn run(
         // length in vblanks). Preallocated: no allocation on the vblank path (#15).
         const MAX_HOLDS: usize = 32;
         let mut holds: Vec<(u64, u64, Content)> = Vec::with_capacity(MAX_HOLDS);
-        // Content of the last two new pictures: when a hold ends, the newest one ends it and the
-        // one before is what stayed on the wall (queue is normally 1).
         // What each ring slot holds (set when a picture is copied into it), and the slot on the
         // wall: a hold is tagged with the slot that stayed on the wall (#15).
         let mut slot_content = vec![Content::Unknown; slots.len()];
