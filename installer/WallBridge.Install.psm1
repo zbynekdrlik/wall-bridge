@@ -137,6 +137,9 @@ function Invoke-WithEngineRestore([string]$Root, [scriptblock]$Action) {
         & $Action
     } catch {
         Write-InstallLog $Root "install failed: $($_.Exception.Message); starting the engine and the tray again"
+        foreach ($t in $script:WatchdogTask, $script:EngineTask) {
+            Enable-ScheduledTask -TaskPath $script:TaskPath -TaskName $t -ErrorAction SilentlyContinue | Out-Null
+        }
         Start-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:EngineTask -ErrorAction SilentlyContinue
         Start-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:TrayTask -ErrorAction SilentlyContinue
         throw
@@ -163,7 +166,7 @@ function Get-ExeVersion([string]$Exe) {
 # the abandoned mutex and the wall stayed black). Returns $true when the engine accepted.
 function Request-EngineStop([string]$Root, [int]$Port = 8930) {
     try {
-        $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "http://127.0.0.1:$Port/api/stop" -TimeoutSec 3
+        $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "http://127.0.0.1:$Port/api/stop" -Headers @{ 'X-WallBridge-Stop' = '1' } -TimeoutSec 3
         Write-InstallLog $Root "graceful stop requested (HTTP $($r.StatusCode))"
         return $true
     } catch {
@@ -173,6 +176,12 @@ function Request-EngineStop([string]$Root, [int]$Port = 8930) {
 }
 
 function Stop-Engines([string]$Root, [int]$WaitS = 15, [int]$Port = 8930, [int]$GraceS = 10) {
+    # The watchdog (every minute) would start an engine again after the graceful exit, and the
+    # kill below could then hit that new engine inside a Spout probe (#20). Register-* enables
+    # them again; Invoke-WithEngineRestore does on failure.
+    foreach ($t in $script:WatchdogTask, $script:EngineTask) {
+        Disable-ScheduledTask -TaskPath $script:TaskPath -TaskName $t -ErrorAction SilentlyContinue | Out-Null
+    }
     if (Request-EngineStop -Root $Root -Port $Port) {
         $deadline = (Get-Date).AddSeconds($GraceS)
         while ((Get-Process -Name 'wall-bridge' -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {

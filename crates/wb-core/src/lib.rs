@@ -6,5 +6,6 @@ pub mod sender;
 pub mod spout_lock;
 pub mod spout_wire;
 pub mod status;
+pub mod timefmt;
 pub mod topology;
 pub mod vblank;

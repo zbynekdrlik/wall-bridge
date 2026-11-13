@@ -304,7 +304,7 @@ fn long_hold_is_taken_only_once() {
 
 #[test]
 fn hms_utc_formats_unix_ms() {
-    use wb_core::pacing::hms_utc;
+    use wb_core::timefmt::hms_utc;
     // 2026-11-13T02:02:05.372Z
     assert_eq!(hms_utc(1_794_535_325_372), "02:02:05.372");
     assert_eq!(hms_utc(0), "00:00:00.000");

@@ -14,17 +14,28 @@ pub const STUCK_MS: u64 = 1000;
 pub struct LockGate {
     /// Start of the current run of timeouts.
     stuck_since: Option<u64>,
+    /// The last timeout: a gap of STUCK_MS without one ends the run (no probes meanwhile is
+    /// not a stuck mutex).
+    last_timeout: Option<u64>,
 }
 
 impl LockGate {
     /// The mutex was obtained.
     pub fn on_locked(&mut self) {
         self.stuck_since = None;
+        self.last_timeout = None;
     }
 
     /// The wait for the mutex timed out at `now_ms`.
     pub fn on_timeout(&mut self, now_ms: u64) {
+        if self
+            .last_timeout
+            .is_some_and(|l| now_ms.saturating_sub(l) >= STUCK_MS)
+        {
+            self.stuck_since = None;
+        }
         self.stuck_since.get_or_insert(now_ms);
+        self.last_timeout = Some(now_ms);
     }
 
     /// Read without the mutex now?

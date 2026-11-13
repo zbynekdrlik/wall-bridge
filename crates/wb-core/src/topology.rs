@@ -184,6 +184,8 @@ pub fn decide(
             h.mismatches = 0;
             h.on_desktop = 0;
             if span_live {
+                h.missing.clear();
+                h.unknown = false;
                 // NVAPI cannot read Mosaic while the whole wall is specialized and scanned out
                 // (EnumDisplayGrids(count) = -130, SNV 12.-13.11.2026); the live span at the
                 // wall size is the whole wall, so it matches and counts as a healthy read.

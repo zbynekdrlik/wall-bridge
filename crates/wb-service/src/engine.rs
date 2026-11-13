@@ -12,10 +12,11 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
-use wb_core::pacing::{hms_utc, Pacer, Show};
+use wb_core::pacing::{Pacer, Show};
 use wb_core::sender::{SenderAction, SenderWatch};
 use wb_core::spout_wire::Content;
 use wb_core::status::{specialized_from_targets, DisplayState};
+use wb_core::timefmt::hms_utc;
 use wb_core::vblank::{missed_between, percentiles_ms};
 use wb_scanout::Scanout;
 use wb_spout::{Probe, Reader};
@@ -219,7 +220,7 @@ pub fn run(
                     display_state(&cfg, None),
                     started.elapsed().as_secs(),
                 );
-                std::thread::sleep(std::time::Duration::from_secs(wait));
+                sleep_unless_stopped(&stop, wait);
                 continue;
             }
         };
@@ -230,7 +231,7 @@ pub fn run(
             Ok(s) => s,
             Err(e) => {
                 error!(err = ?e, "ring allocation failed, re-acquiring");
-                std::thread::sleep(std::time::Duration::from_secs(REOPEN_BACKOFF_S[1]));
+                sleep_unless_stopped(&stop, REOPEN_BACKOFF_S[1]);
                 continue;
             }
         };
@@ -251,8 +252,10 @@ pub fn run(
         let mut holds: Vec<(u64, u64, Content)> = Vec::with_capacity(MAX_HOLDS);
         // Content of the last two new pictures: when a hold ends, the newest one ends it and the
         // one before is what stayed on the wall (queue is normally 1).
-        let mut content_prev = Content::Unknown;
-        let mut content_last = Content::Unknown;
+        // What each ring slot holds (set when a picture is copied into it), and the slot on the
+        // wall: a hold is tagged with the slot that stayed on the wall (#15).
+        let mut slot_content = vec![Content::Unknown; slots.len()];
+        let mut on_wall: Option<usize> = None;
         let mut holds_dropped = 0u64;
         // Presents slower than SLOW_SHOW_US: (Unix ms at its start, µs, present number since
         // the target was acquired), so a box-wide stall can be timed exactly (#20).
@@ -289,7 +292,9 @@ pub fn run(
             }
             last_vblank = Some(wake);
 
+            let on_wall_before = on_wall;
             if let Show::New(slot) = pacer.on_vblank() {
+                on_wall = Some(slot);
                 let t = Instant::now();
                 let t_ms = now_ms();
                 if let Err(e) = scanout.show(&ctx, &slots[slot]) {
@@ -305,7 +310,8 @@ pub fn run(
             }
             if let Some(len) = pacer.take_long_hold() {
                 if holds.len() < MAX_HOLDS {
-                    holds.push((now_ms(), len, content_prev));
+                    let held = on_wall_before.map_or(Content::Unknown, |s| slot_content[s]);
+                    holds.push((now_ms(), len, held));
                 } else {
                     holds_dropped += 1;
                 }
@@ -338,17 +344,9 @@ pub fn run(
                                     size = ?reader.size(),
                                     "sender opened"
                                 );
-                                // Pay the shared texture's first-use cost here, timed, instead
-                                // of inside the first present (137 ms at present #2, #20).
-                                match reader.warm_up(&ctx, 500) {
-                                    Ok(Some(us)) => info!(us, "sender warm-up copy done"),
-                                    Ok(None) => warn!(
-                                        "sender warm-up copy skipped or not done within 500 ms"
-                                    ),
-                                    Err(e) => warn!(err = ?e, "sender warm-up copy failed"),
-                                }
                                 if reader.size() != Some((display.width, display.height)) {
                                     clear(&device, &ctx, &slots);
+                                    slot_content.fill(Content::Unknown);
                                 }
                             }
                             Err(e) => {
@@ -372,6 +370,7 @@ pub fn run(
             let budget = std::time::Duration::from_micros(period_us.saturating_sub(guard_us));
             while wake.elapsed() < budget {
                 let mut arrived_off_us = None;
+                let mut arrived_slot = None;
                 let t = Instant::now();
                 // Never wait for Arena's mutex past the guard.
                 let left_ms = budget.saturating_sub(wake.elapsed()).as_millis() as u32;
@@ -379,6 +378,7 @@ pub fn run(
                     let off_us = wake.elapsed().as_micros() as u64;
                     arrived_off_us = Some(off_us);
                     let slot = pacer.arrive(off_us as f64 / period_us as f64);
+                    arrived_slot = Some(slot);
                     slots[slot].clone()
                 });
                 probe_us_max = probe_us_max.max(t.elapsed().as_micros() as u64);
@@ -388,8 +388,9 @@ pub fn run(
                             arrivals.push(us);
                         }
                         watch.picture(now_ms());
-                        content_prev = content_last;
-                        content_last = reader.last_content();
+                        if let Some(s) = arrived_slot {
+                            slot_content[s] = reader.last_content();
+                        }
                         break;
                     }
                     Ok(Probe::Same) => {
@@ -500,5 +501,14 @@ pub fn run(
             started.elapsed().as_secs(),
         );
         std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+/// Sleeps `secs`, in 100 ms steps, returning early when a graceful stop is requested, so the
+/// installer's 10 s grace is enough while the wall is not acquired (TVs off, #20).
+fn sleep_unless_stopped(stop: &AtomicBool, secs: u64) {
+    let end = Instant::now() + std::time::Duration::from_secs(secs);
+    while Instant::now() < end && !stop.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
