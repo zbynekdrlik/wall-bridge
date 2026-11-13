@@ -183,7 +183,19 @@ pub fn decide(
             h.read_errors += 1;
             h.mismatches = 0;
             h.on_desktop = 0;
-            h.healthy = 0;
+            if span_live {
+                // NVAPI cannot read Mosaic while the whole wall is specialized and scanned out
+                // (EnumDisplayGrids(count) = -130, SNV 12.-13.11.2026); the live span at the
+                // wall size is the whole wall, so it matches and counts as a healthy read.
+                h.matches = true;
+                h.healthy += 1;
+                if h.healthy >= CONFIRM_READS {
+                    h.failed_at.clear();
+                    h.gave_up = false;
+                }
+            } else {
+                h.healthy = 0;
+            }
             return KeeperAction::None;
         }
     };
