@@ -14,6 +14,7 @@ use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
 use wb_core::pacing::{hms_utc, Pacer, Show};
 use wb_core::sender::{SenderAction, SenderWatch};
+use wb_core::spout_wire::Content;
 use wb_core::status::{specialized_from_targets, DisplayState};
 use wb_core::vblank::{missed_between, percentiles_ms};
 use wb_scanout::Scanout;
@@ -228,7 +229,11 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
         // Holds of LONG_HOLD_VB+ vblanks in this window: (Unix ms the new picture ended it,
         // length in vblanks). Preallocated: no allocation on the vblank path (#15).
         const MAX_HOLDS: usize = 32;
-        let mut holds: Vec<(u64, u64)> = Vec::with_capacity(MAX_HOLDS);
+        let mut holds: Vec<(u64, u64, Content)> = Vec::with_capacity(MAX_HOLDS);
+        // Content of the last two new pictures: when a hold ends, the newest one ends it and the
+        // one before is what stayed on the wall (queue is normally 1).
+        let mut content_prev = Content::Unknown;
+        let mut content_last = Content::Unknown;
         let mut holds_dropped = 0u64;
         let mut missed = 0u64;
         let mut lock_timeouts = 0u64;
@@ -263,7 +268,7 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
             }
             if let Some(len) = pacer.take_long_hold() {
                 if holds.len() < MAX_HOLDS {
-                    holds.push((now_ms(), len));
+                    holds.push((now_ms(), len, content_prev));
                 } else {
                     holds_dropped += 1;
                 }
@@ -337,6 +342,8 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                             arrivals.push(us);
                         }
                         watch.picture(now_ms());
+                        content_prev = content_last;
+                        content_last = reader.last_content();
                         break;
                     }
                     Ok(Probe::Same) => {
@@ -363,14 +370,20 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                 w.missed_vblanks = missed;
                 (w.arrival_ms_p50, w.arrival_ms_p90) = percentiles_ms(&mut arrivals);
                 let sender = watch.state(now_ms());
-                // Each hold as "<start>-<end>/<vblanks>" in UTC; start = end - length. Both are
+                // Each hold as "<start>-<end>/<vblanks>/<black|solid|image>" in UTC; start = end -
+                // length; the content says whether a still picture explains it (#15). Both are
                 // wall times; Arena's own pictures came ~SHOW_DELAY (2 vblanks) earlier.
                 let period_ms = period_us as f64 / 1000.0;
                 let holds_txt = holds
                     .iter()
-                    .map(|&(end, len)| {
+                    .map(|&(end, len, content)| {
                         let start = end.saturating_sub((len as f64 * period_ms) as u64);
-                        format!("{}-{}/{len}", hms_utc(start), hms_utc(end))
+                        format!(
+                            "{}-{}/{len}/{}",
+                            hms_utc(start),
+                            hms_utc(end),
+                            content.label()
+                        )
                     })
                     .collect::<Vec<_>>()
                     .join(",");

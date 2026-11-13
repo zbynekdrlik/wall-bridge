@@ -306,6 +306,11 @@ impl Reader {
         self.prev_sig = sig;
         Ok(Probe::New)
     }
+
+    /// What the last new picture showed (black, one colour, image), from its probe boxes.
+    pub fn last_content(&self) -> spout_wire::Content {
+        spout_wire::classify_sig(&self.prev_sig)
+    }
 }
 
 impl Drop for Reader {
