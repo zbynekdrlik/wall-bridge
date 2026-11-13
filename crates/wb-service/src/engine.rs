@@ -12,7 +12,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
-use wb_core::pacing::{Pacer, Show};
+use wb_core::pacing::{hms_utc, Pacer, Show};
 use wb_core::sender::{SenderAction, SenderWatch};
 use wb_core::status::{specialized_from_targets, DisplayState};
 use wb_core::vblank::{missed_between, percentiles_ms};
@@ -225,6 +225,11 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
         // Publish at once: the keeper and the updater's health check read it.
         publish_state(&status, display.clone(), started.elapsed().as_secs());
         let mut arrivals: Vec<u64> = vec![];
+        // Holds of LONG_HOLD_VB+ vblanks in this window: (Unix ms the new picture ended it,
+        // length in vblanks). Preallocated: no allocation on the vblank path (#15).
+        const MAX_HOLDS: usize = 32;
+        let mut holds: Vec<(u64, u64)> = Vec::with_capacity(MAX_HOLDS);
+        let mut holds_dropped = 0u64;
         let mut missed = 0u64;
         let mut lock_timeouts = 0u64;
         // Per-window maxima (µs) of the steps on the vblank path, to see where time goes.
@@ -255,6 +260,13 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     break;
                 }
                 show_us_max = show_us_max.max(t.elapsed().as_micros() as u64);
+            }
+            if let Some(len) = pacer.take_long_hold() {
+                if holds.len() < MAX_HOLDS {
+                    holds.push((now_ms(), len));
+                } else {
+                    holds_dropped += 1;
+                }
             }
 
             // Sender check every N vblanks.
@@ -351,6 +363,17 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                 w.missed_vblanks = missed;
                 (w.arrival_ms_p50, w.arrival_ms_p90) = percentiles_ms(&mut arrivals);
                 let sender = watch.state(now_ms());
+                // Each hold as "<start>-<end>/<vblanks>" in UTC; start = end - length. Both are
+                // wall times; Arena's own pictures came ~SHOW_DELAY (2 vblanks) earlier.
+                let period_ms = period_us as f64 / 1000.0;
+                let holds_txt = holds
+                    .iter()
+                    .map(|&(end, len)| {
+                        let start = end.saturating_sub((len as f64 * period_ms) as u64);
+                        format!("{}-{}/{len}", hms_utc(start), hms_utc(end))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
                 info!(
                     vblanks = w.vblanks,
                     new = w.new,
@@ -370,8 +393,12 @@ pub fn run(cfg: Config, status: Shared, reacquire: Arc<AtomicBool>) -> Result<()
                     arrival_ms_p90 = w.arrival_ms_p90,
                     sender_connected = sender.connected,
                     picture_age_ms = ?sender.last_picture_age_ms,
+                    holds = %holds_txt,
+                    holds_dropped,
                     "window"
                 );
+                holds.clear();
+                holds_dropped = 0;
                 let mut st = status.write().expect("status lock");
                 // The keeper owns `specialized`: it reads the live target list.
                 st.display = DisplayState {
