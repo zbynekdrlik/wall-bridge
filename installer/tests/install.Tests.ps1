@@ -168,3 +168,35 @@ Describe 'Invoke-WithEngineRestore' {
         Should -Invoke -ModuleName WallBridge.Install Start-ScheduledTask -Times 0 -Exactly
     }
 }
+
+Describe 'Request-EngineStop' {
+    # A kill can land while the engine holds Arena's SpoutAccessMutex; Arena then keeps the
+    # abandoned mutex (13.11. 04:30Z, wall black, #20). The installer asks for a graceful stop.
+    It 'returns false and logs when no engine answers' {
+        $root = Join-Path $TestDrive 'req-none'
+        Mock -ModuleName WallBridge.Install Invoke-WebRequest { throw 'Unable to connect to the remote server' }
+        Request-EngineStop -Root $root -Port 8930 | Should -BeFalse
+        Get-Content (Join-Path $root 'logs\install.log') -Raw | Should -Match 'graceful stop not possible'
+    }
+    It 'posts to the loopback stop endpoint and returns true when accepted' {
+        $root = Join-Path $TestDrive 'req-ok'
+        Mock -ModuleName WallBridge.Install Invoke-WebRequest { [pscustomobject]@{ StatusCode = 202 } }
+        Request-EngineStop -Root $root -Port 8931 | Should -BeTrue
+        Should -Invoke -ModuleName WallBridge.Install Invoke-WebRequest -Times 1 -ParameterFilter {
+            $Method -eq 'Post' -and $Uri -eq 'http://127.0.0.1:8931/api/stop'
+        }
+    }
+}
+
+Describe 'Stop-Engines graceful' {
+    It 'kills nothing when the engine exits after the stop request' {
+        $root = Join-Path $TestDrive 'graceful'
+        Mock -ModuleName WallBridge.Install Invoke-WebRequest { [pscustomobject]@{ StatusCode = 202 } }
+        Mock -ModuleName WallBridge.Install Stop-ScheduledTask {}
+        Mock -ModuleName WallBridge.Install Get-Process {} -ParameterFilter { $Name }
+        Mock -ModuleName WallBridge.Install Stop-Process {}
+        Stop-Engines -Root $root -Port 8930
+        Should -Invoke -ModuleName WallBridge.Install Stop-Process -Times 0
+        Get-Content (Join-Path $root 'logs\install.log') -Raw | Should -Match 'engine exited gracefully'
+    }
+}
