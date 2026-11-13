@@ -1,6 +1,9 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use axum::extract::ConnectInfo;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tower::ServiceExt;
 use wb_core::health::State;
@@ -40,7 +43,7 @@ fn status() -> Status {
 }
 
 async fn get(path: &str) -> (StatusCode, String) {
-    let app = router(Arc::new(RwLock::new(status())));
+    let app = router(Arc::new(RwLock::new(status())), Arc::new(AtomicBool::new(false)));
     let res = app
         .oneshot(Request::get(path).body(Body::empty()).unwrap())
         .await
@@ -72,4 +75,35 @@ async fn dashboard_shows_version() {
 async fn unknown_path_is_404() {
     let (code, _) = get("/nope").await;
     assert_eq!(code, StatusCode::NOT_FOUND);
+}
+
+/// POSTs /api/stop as if from `peer`; returns the status code and the stop flag after it.
+async fn stop_from(peer: &str) -> (StatusCode, bool) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let app = router(Arc::new(RwLock::new(status())), stop.clone());
+    let mut req = Request::post("/api/stop").body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
+    let res = app.oneshot(req).await.unwrap();
+    (res.status(), stop.load(Ordering::SeqCst))
+}
+
+#[tokio::test]
+async fn stop_from_loopback_asks_the_engine_to_stop() {
+    // The installer asks for a graceful stop so the engine never dies holding Arena's
+    // SpoutAccessMutex (13.11. 04:30Z: an abandoned mutex Arena kept, wall black, #20).
+    assert_eq!(stop_from("127.0.0.1:50000").await, (StatusCode::ACCEPTED, true));
+    assert_eq!(stop_from("[::1]:50000").await, (StatusCode::ACCEPTED, true));
+}
+
+#[tokio::test]
+async fn stop_from_the_lan_is_refused() {
+    // The API listens on 0.0.0.0 for the dashboard; nobody on the LAN may stop the wall.
+    assert_eq!(stop_from("10.77.9.195:50000").await, (StatusCode::FORBIDDEN, false));
+}
+
+#[tokio::test]
+async fn stop_needs_post() {
+    let (code, _) = get("/api/stop").await;
+    assert_eq!(code, StatusCode::METHOD_NOT_ALLOWED);
 }
