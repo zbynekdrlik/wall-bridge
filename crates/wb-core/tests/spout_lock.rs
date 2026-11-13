@@ -46,3 +46,14 @@ fn getting_the_mutex_again_ends_the_bypass() {
 fn stuck_ms_is_one_second() {
     assert_eq!(STUCK_MS, 1000);
 }
+
+#[test]
+fn timeouts_far_apart_are_not_a_stuck_mutex() {
+    // One timeout, then no probes for minutes (display re-acquire), then one ordinary timeout:
+    // that is not 1 s of nothing but timeouts (review of PR #21).
+    let mut g = LockGate::default();
+    g.on_timeout(1000);
+    g.on_timeout(1000 + 120_000);
+    assert!(!g.bypass(1000 + 120_000));
+    assert!(g.bypass(1000 + 120_000 + STUCK_MS));
+}

@@ -578,3 +578,22 @@ fn unreadable_layout_without_a_live_span_is_no_match() {
     }
     assert!(!h.matches);
 }
+
+#[test]
+fn unreadable_layout_with_a_live_span_clears_missing_and_unknown() {
+    // TVs come on while a read still lists only panel A (missing B, C); then the span goes
+    // live and every read is -130. The stale report must not survive (review of PR #21).
+    let mut h = KeeperHistory::default();
+    decide(
+        &def(),
+        Ok(vec![grid(1, 1, &[A]), grid(1, 1, &[GRABBER])]),
+        false,
+        true,
+        &mut h,
+        0,
+    );
+    assert_eq!(h.missing, vec![B, C]);
+    decide(&def(), Err(MINUS_130.into()), true, true, &mut h, 10_000);
+    assert!(h.missing.is_empty());
+    assert!(!h.unknown);
+}

@@ -82,9 +82,17 @@ async fn unknown_path_is_404() {
 
 /// POSTs /api/stop as if from `peer`; returns the status code and the stop flag after it.
 async fn stop_from(peer: &str) -> (StatusCode, bool) {
+    stop_with(peer, true).await
+}
+
+async fn stop_with(peer: &str, header: bool) -> (StatusCode, bool) {
     let stop = Arc::new(AtomicBool::new(false));
     let app = router(Arc::new(RwLock::new(status())), stop.clone());
-    let mut req = Request::post("/api/stop").body(Body::empty()).unwrap();
+    let mut b = Request::post("/api/stop");
+    if header {
+        b = b.header("X-WallBridge-Stop", "1");
+    }
+    let mut req = b.body(Body::empty()).unwrap();
     req.extensions_mut()
         .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
     let res = app.oneshot(req).await.unwrap();
@@ -115,4 +123,14 @@ async fn stop_from_the_lan_is_refused() {
 async fn stop_needs_post() {
     let (code, _) = get("/api/stop").await;
     assert_eq!(code, StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn stop_without_the_header_is_refused() {
+    // A web page in a browser on the PC can POST to 127.0.0.1 without preflight; a custom
+    // header cannot be sent cross-site without CORS, which the API does not grant.
+    assert_eq!(
+        stop_with("127.0.0.1:50000", false).await,
+        (StatusCode::FORBIDDEN, false)
+    );
 }

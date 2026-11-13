@@ -200,3 +200,25 @@ Describe 'Stop-Engines graceful' {
         Get-Content (Join-Path $root 'logs\install.log') -Raw | Should -Match 'engine exited gracefully'
     }
 }
+
+Describe 'Stop-Engines keeps the watchdog from restarting the engine' {
+    It 'disables the watchdog and engine tasks before the stop request' {
+        $root = Join-Path $TestDrive 'nowatch'
+        Mock -ModuleName WallBridge.Install Disable-ScheduledTask {}
+        Mock -ModuleName WallBridge.Install Invoke-WebRequest { [pscustomobject]@{ StatusCode = 202 } }
+        Mock -ModuleName WallBridge.Install Stop-ScheduledTask {}
+        Mock -ModuleName WallBridge.Install Get-Process {} -ParameterFilter { $Name }
+        Stop-Engines -Root $root -Port 8930
+        Should -Invoke -ModuleName WallBridge.Install Disable-ScheduledTask -ParameterFilter { $TaskName -eq 'WallBridge Watchdog' } -Times 1
+        Should -Invoke -ModuleName WallBridge.Install Disable-ScheduledTask -ParameterFilter { $TaskName -eq 'WallBridge Engine' } -Times 1
+        Should -Invoke -ModuleName WallBridge.Install Invoke-WebRequest -ParameterFilter { $Headers['X-WallBridge-Stop'] -eq '1' } -Times 1
+    }
+    It 'enables them again when the install fails' {
+        $root = Join-Path $TestDrive 'reenable'
+        Mock -ModuleName WallBridge.Install Enable-ScheduledTask {}
+        Mock -ModuleName WallBridge.Install Start-ScheduledTask {}
+        { Invoke-WithEngineRestore -Root $root -Action { throw 'boom' } } | Should -Throw '*boom*'
+        Should -Invoke -ModuleName WallBridge.Install Enable-ScheduledTask -ParameterFilter { $TaskName -eq 'WallBridge Watchdog' } -Times 1
+        Should -Invoke -ModuleName WallBridge.Install Enable-ScheduledTask -ParameterFilter { $TaskName -eq 'WallBridge Engine' } -Times 1
+    }
+}
