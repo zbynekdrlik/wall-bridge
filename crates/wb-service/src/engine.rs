@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
 use wb_core::pacing::{Pacer, Show};
-use wb_core::region_watch::{clamp_region, RegionWatch};
+use wb_core::region_watch::{clamp_region, GapWatch, RegionWatch};
 use wb_core::sender::{SenderAction, SenderWatch};
 use wb_core::slow_show::{SlowShowRing, SLOW_SHOW_RING_LEN};
 use wb_core::spout_wire::Content;
@@ -423,6 +423,8 @@ pub fn run(
         let mut loop_end_us_max = 0u64;
         let mut last_vblank: Option<Instant> = None;
         let mut window_start = Instant::now();
+        // Gaps of 45 ms or more between Arena's new pictures (a late publish, #24).
+        let mut gaps = GapWatch::new();
         let mut region = cfg.diag.region.and_then(|r| {
             let Some(c) = clamp_region(r, scanout.width, scanout.height) else {
                 warn!(region = ?r, w = scanout.width, h = scanout.height, "diag region is outside the picture, off");
@@ -516,6 +518,7 @@ pub fn run(
                                     size = ?reader.size(),
                                     "sender opened"
                                 );
+                                gaps.reset();
                                 if let Some(rp) = region.as_mut() {
                                     rp.watch.reset();
                                 }
@@ -532,6 +535,7 @@ pub fn run(
                         }
                     }
                     SenderAction::Hold => {
+                        gaps.reset();
                         if reader.open_handle().is_some() {
                             warn!(sender = %cfg.sender.name, "sender lost, holding the last picture");
                             reader.close();
@@ -562,7 +566,9 @@ pub fn run(
                         if let Some(us) = arrived_off_us {
                             arrivals.push(us);
                         }
-                        watch.picture(now_ms());
+                        let at = now_ms();
+                        watch.picture(at);
+                        gaps.picture(at);
                         if let Some(s) = arrived_slot {
                             slot_content[s] = reader.last_content();
                             if let Some(rp) = region.as_mut() {
@@ -618,6 +624,13 @@ pub fn run(
                     .map(|&(at, us, n)| format!("{}/{us}@{n}", hms_utc(at)))
                     .collect::<Vec<_>>()
                     .join(",");
+                // Each late picture as "<UTC of its arrival>/<ms since the one before>".
+                let (late, late_dropped) = gaps.take_window();
+                let late_txt = late
+                    .iter()
+                    .map(|&(at, gap)| format!("{}/{gap}", hms_utc(at)))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 info!(
                     vblanks = w.vblanks,
                     new = w.new,
@@ -640,6 +653,8 @@ pub fn run(
                     holds = %holds_txt,
                     holds_dropped,
                     slow_shows = %slow_txt,
+                    late_gaps = %late_txt,
+                    late_gaps_dropped = late_dropped,
                     lock_bypassed = reader.take_bypassed(),
                     "window"
                 );

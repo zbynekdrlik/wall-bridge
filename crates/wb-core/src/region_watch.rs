@@ -115,3 +115,61 @@ impl RegionWatch {
         out
     }
 }
+
+/// A gap this long (ms) or longer between two new Arena pictures is logged (#24): at 30 fps a
+/// picture is due every 33 ms, so 45 ms means one came at least a refresh late.
+pub const LATE_GAP_MS: u64 = 45;
+/// Most gaps kept per reporting window; more are only counted.
+pub const MAX_GAPS: usize = 32;
+
+/// Gaps of LATE_GAP_MS or more between new pictures: (Unix ms of the late picture, gap ms).
+/// No allocation after `new`.
+pub struct GapWatch {
+    prev_ms: Option<u64>,
+    gaps: Vec<(u64, u64)>,
+    dropped: u64,
+}
+
+impl Default for GapWatch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GapWatch {
+    pub fn new() -> GapWatch {
+        GapWatch {
+            prev_ms: None,
+            gaps: Vec::with_capacity(MAX_GAPS),
+            dropped: 0,
+        }
+    }
+
+    /// A new picture arrived at `at_ms`.
+    pub fn picture(&mut self, at_ms: u64) {
+        if let Some(prev) = self.prev_ms {
+            let gap = at_ms.saturating_sub(prev);
+            if gap >= LATE_GAP_MS {
+                if self.gaps.len() < MAX_GAPS {
+                    self.gaps.push((at_ms, gap));
+                } else {
+                    self.dropped += 1;
+                }
+            }
+        }
+        self.prev_ms = Some(at_ms);
+    }
+
+    /// The sender went away or re-opened: the next picture starts a new chain.
+    pub fn reset(&mut self) {
+        self.prev_ms = None;
+    }
+
+    /// Gaps of this window (oldest first) and how many did not fit; then a fresh window.
+    pub fn take_window(&mut self) -> (Vec<(u64, u64)>, u64) {
+        let out = (self.gaps.clone(), self.dropped);
+        self.gaps.clear();
+        self.dropped = 0;
+        out
+    }
+}

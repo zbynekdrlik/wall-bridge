@@ -115,3 +115,45 @@ fn diag_region_is_off_by_default_and_reads_from_toml() {
     assert_eq!(c.diag.region, Some([1008, 593, 5090, 617]));
     assert!(Config::from_toml("[diag]\nbogus = 1\n").is_err());
 }
+
+use wb_core::region_watch::{GapWatch, LATE_GAP_MS, MAX_GAPS};
+
+#[test]
+fn gaps_under_the_threshold_are_not_logged() {
+    let mut g = GapWatch::new();
+    g.picture(1000);
+    g.picture(1033);
+    g.picture(1033 + LATE_GAP_MS - 1);
+    assert_eq!(g.take_window(), (vec![], 0));
+}
+
+#[test]
+fn a_late_picture_is_logged_with_its_gap() {
+    let mut g = GapWatch::new();
+    g.picture(1000);
+    g.picture(1050);
+    g.picture(1067);
+    assert_eq!(g.take_window(), (vec![(1050, 50)], 0));
+    assert_eq!(g.take_window(), (vec![], 0));
+}
+
+#[test]
+fn reset_starts_a_new_chain() {
+    let mut g = GapWatch::new();
+    g.picture(1000);
+    g.reset();
+    g.picture(5000);
+    assert_eq!(g.take_window(), (vec![], 0));
+}
+
+#[test]
+fn gaps_past_the_cap_are_counted() {
+    let mut g = GapWatch::new();
+    for i in 0..(MAX_GAPS as u64 + 2) {
+        g.picture(i * 100);
+    }
+    let (gaps, dropped) = g.take_window();
+    assert_eq!(gaps.len(), MAX_GAPS);
+    assert_eq!(dropped, 1);
+    assert_eq!(gaps[0], (100, 100));
+}
