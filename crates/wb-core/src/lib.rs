@@ -2,6 +2,7 @@
 pub mod config;
 pub mod health;
 pub mod pacing;
+pub mod region_watch;
 pub mod sender;
 pub mod slow_show;
 pub mod spout_lock;

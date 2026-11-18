@@ -10,6 +10,16 @@ pub struct Config {
     pub wall: WallCfg,
     pub pacing: PacingCfg,
     pub topology: TopologyCfg,
+    pub diag: DiagCfg,
+}
+
+/// Diagnostics, all off by default.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DiagCfg {
+    /// `[x0, y0, x1, y1]` of Arena's output (x1/y1 exclusive): log runs of new pictures whose
+    /// content there repeats the picture before (#24).
+    pub region: Option<[u32; 4]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
