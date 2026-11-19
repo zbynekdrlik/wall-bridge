@@ -230,3 +230,12 @@ fn late_gaps_use_the_monotonic_clock() {
     g.picture(1100, 60_067);
     assert_eq!(g.take_window(), (vec![(60_067, 67)], 0));
 }
+
+#[test]
+fn release_on_an_empty_ring_is_a_no_op() {
+    let mut r = StageRing::new();
+    r.release();
+    assert_eq!((r.in_flight(), r.oldest()), (0, None));
+    assert_eq!(r.queue(5), Some(0));
+    assert_eq!(r.oldest(), Some((0, 5, false)));
+}

@@ -105,7 +105,7 @@ jobs:
 
   dashboard-e2e:
     # ubuntu-latest became 26.04 (18.11.2026): Playwright 1.58.2 cannot install chromium
-    # there ("does not support chromium on ubuntu26.04-x64"). Pinned until Playwright supports it.
+    # there ("does not support chromium on ubuntu26.04-x64"). Pinned until Playwright supports it (#26).
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
