@@ -145,8 +145,9 @@ impl GapWatch {
         }
     }
 
-    /// A new picture arrived at `at_ms`.
-    pub fn picture(&mut self, at_ms: u64) {
+    /// A new picture arrived at monotonic `mono_ms`, Unix `at_ms`.
+    pub fn picture(&mut self, mono_ms: u64, at_ms: u64) {
+        let _ = mono_ms;
         if let Some(prev) = self.prev_ms {
             let gap = at_ms.saturating_sub(prev);
             if gap >= LATE_GAP_MS {
@@ -171,5 +172,59 @@ impl GapWatch {
         self.gaps.clear();
         self.dropped = 0;
         out
+    }
+}
+
+/// Staging copies the region probe can have in flight: under GPU load one copy can take more
+/// than the 2 vblanks between Arena's pictures (0.2.21 skipped up to 50 per window).
+pub const STAGES: usize = 4;
+
+/// Order bookkeeping of the region probe's staging copies (#24). Copies are queued in picture
+/// order and read back oldest first. A break in the comparison chain (a picture not copied, a
+/// sender re-open) travels with the next queued copy, so it applies when that copy is read,
+/// not to a copy queued before the break.
+pub struct StageRing {
+    /// Arrival (Unix ms) of the picture in each stage, and whether the chain broke before it.
+    pending: [Option<(u64, bool)>; STAGES],
+    head: usize,
+    in_flight: usize,
+    break_next: bool,
+}
+
+impl Default for StageRing {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StageRing {
+    pub fn new() -> StageRing {
+        todo!()
+    }
+
+    /// The chain broke: the next queued picture must not be compared with the one before it.
+    pub fn mark_break(&mut self) {
+        todo!()
+    }
+
+    /// Stage to copy a new picture (arrived at `at_ms`) into; `None` when every stage is in
+    /// flight, which also breaks the chain.
+    pub fn queue(&mut self, at_ms: u64) -> Option<usize> {
+        let _ = at_ms;
+        todo!()
+    }
+
+    /// The oldest copy in flight: (stage, arrival ms, chain broke before it).
+    pub fn oldest(&self) -> Option<(usize, u64, bool)> {
+        todo!()
+    }
+
+    /// Frees the oldest copy.
+    pub fn release(&mut self) {
+        todo!()
+    }
+
+    pub fn in_flight(&self) -> usize {
+        todo!()
     }
 }

@@ -568,7 +568,7 @@ pub fn run(
                         }
                         let at = now_ms();
                         watch.picture(at);
-                        gaps.picture(at);
+                        gaps.picture(at, at);
                         if let Some(s) = arrived_slot {
                             slot_content[s] = reader.last_content();
                             if let Some(rp) = region.as_mut() {
