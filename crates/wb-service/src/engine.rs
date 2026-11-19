@@ -13,6 +13,10 @@ use tracing::{debug, error, info, warn};
 use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
 use wb_core::pacing::{Pacer, Show};
+use wb_core::region_watch::{
+    break_chain, clamp_region, FailAction, FailStreak, GapWatch, MonoMs, RegionWatch, StageRing,
+    MAP_FAIL_LIMIT, STAGES,
+};
 use wb_core::sender::{SenderAction, SenderWatch};
 use wb_core::slow_show::{SlowShowRing, SLOW_SHOW_RING_LEN};
 use wb_core::spout_wire::Content;
@@ -139,6 +143,148 @@ fn clear(device: &ID3D11Device, ctx: &ID3D11DeviceContext, slots: &[ID3D11Textur
             }
             Err(e) => warn!(err = ?e, "could not clear a ring slot"),
         }
+    }
+}
+
+/// Diagnostic copy of one region of each new picture (#24): queued after the picture lands in
+/// its ring slot, read back in order without waiting on a later vblank, compared with the one
+/// before.
+struct RegionProbe {
+    region: [u32; 4],
+    stages: Vec<ID3D11Texture2D>,
+    /// Which stage holds which picture, oldest first, and where the chain broke.
+    ring: StageRing,
+    /// Previous region, BGRA rows packed; preallocated.
+    prev: Vec<u8>,
+    cur: Vec<u8>,
+    watch: RegionWatch,
+    /// New pictures not read because every stage was still in flight.
+    skipped: u64,
+    read_us_max: u64,
+    /// Map failures in a row; the first one is logged, MAP_FAIL_LIMIT turn the probe off.
+    fails: FailStreak,
+}
+
+impl RegionProbe {
+    fn new(device: &ID3D11Device, region: [u32; 4]) -> Result<RegionProbe> {
+        let [x0, y0, x1, y1] = region;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: x1 - x0,
+            Height: y1 - y0,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+            MiscFlags: 0,
+        };
+        let stages = (0..STAGES)
+            .map(|_| {
+                let mut t = None;
+                unsafe { device.CreateTexture2D(&desc, None, Some(&mut t))? };
+                Ok(t.expect("staging texture"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let bytes = ((x1 - x0) * (y1 - y0) * 4) as usize;
+        Ok(RegionProbe {
+            region,
+            stages,
+            ring: StageRing::new(),
+            prev: vec![0; bytes],
+            cur: vec![0; bytes],
+            watch: RegionWatch::new(),
+            skipped: 0,
+            read_us_max: 0,
+            fails: FailStreak::new(),
+        })
+    }
+
+    /// Queues the region copy of a picture that just landed in `slot`.
+    fn queue(&mut self, ctx: &ID3D11DeviceContext, slot: &ID3D11Texture2D, at_ms: u64) {
+        let Some(k) = self.ring.queue(at_ms) else {
+            self.skipped += 1;
+            return;
+        };
+        let [x0, y0, x1, y1] = self.region;
+        let b = D3D11_BOX {
+            left: x0,
+            top: y0,
+            front: 0,
+            right: x1,
+            bottom: y1,
+            back: 1,
+        };
+        unsafe {
+            ctx.CopySubresourceRegion(&self.stages[k], 0, 0, 0, 0, slot, 0, Some(&b));
+            ctx.Flush();
+        }
+    }
+
+    /// Reads every finished copy, oldest first; stops at the first one the GPU still owns.
+    fn try_read(&mut self, ctx: &ID3D11DeviceContext) {
+        while !self.fails.dead() && self.ring.in_flight() > 0 && self.read_one(ctx) {}
+    }
+
+    /// Reads the oldest copy in flight if the GPU is done with it; never waits. Returns whether
+    /// a copy left the queue.
+    fn read_one(&mut self, ctx: &ID3D11DeviceContext) -> bool {
+        let Some((k, at_ms, broke)) = self.ring.oldest() else {
+            return false;
+        };
+        let t = Instant::now();
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        match unsafe {
+            ctx.Map(
+                &self.stages[k],
+                0,
+                D3D11_MAP_READ,
+                D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32,
+                Some(&mut mapped),
+            )
+        } {
+            Ok(()) => {}
+            Err(e) if e.code() == DXGI_ERROR_WAS_STILL_DRAWING => return false,
+            Err(e) => {
+                // Counted as a skip; only the first failure in a row is logged.
+                match self.fails.fail() {
+                    FailAction::Log => warn!(err = ?e, "region probe map failed"),
+                    FailAction::Stop => warn!(
+                        err = ?e,
+                        fails = MAP_FAIL_LIMIT,
+                        "region probe off after map failures in a row"
+                    ),
+                    FailAction::Quiet => {}
+                }
+                self.ring.release();
+                self.skipped += 1;
+                self.watch.reset();
+                return true;
+            }
+        }
+        self.fails.ok();
+        let [x0, _, x1, _] = self.region;
+        let row = ((x1 - x0) * 4) as usize;
+        for (r, chunk) in self.cur.chunks_exact_mut(row).enumerate() {
+            unsafe {
+                let p = (mapped.pData as *const u8).add(r * mapped.RowPitch as usize);
+                chunk.copy_from_slice(std::slice::from_raw_parts(p, row));
+            }
+        }
+        unsafe { ctx.Unmap(&self.stages[k], 0) };
+        self.ring.release();
+        if broke {
+            self.watch.reset();
+        }
+        let same = self.cur == self.prev;
+        std::mem::swap(&mut self.cur, &mut self.prev);
+        self.watch.observe(at_ms, same);
+        self.read_us_max = self.read_us_max.max(t.elapsed().as_micros() as u64);
+        true
     }
 }
 
@@ -274,6 +420,24 @@ pub fn run(
         let mut loop_end_us_max = 0u64;
         let mut last_vblank: Option<Instant> = None;
         let mut window_start = Instant::now();
+        // Gaps of 45 ms or more between Arena's new pictures (a late publish, #24).
+        let mut gaps = GapWatch::new();
+        let mut region = cfg.diag.region.and_then(|r| {
+            let Some(c) = clamp_region(r, scanout.width, scanout.height) else {
+                warn!(region = ?r, w = scanout.width, h = scanout.height, "diag region is outside the picture, off");
+                return None;
+            };
+            match RegionProbe::new(&device, c) {
+                Ok(p) => {
+                    info!(region = ?c, "diag region probe on (#24)");
+                    Some(p)
+                }
+                Err(e) => {
+                    warn!(err = ?e, region = ?c, "diag region probe could not start, off");
+                    None
+                }
+            }
+        });
 
         // 2) Run on the wall's vblanks until the target is lost.
         loop {
@@ -293,6 +457,13 @@ pub fn run(
                 missed += missed_between(wake.duration_since(prev).as_micros() as u64, period_us);
             }
             last_vblank = Some(wake);
+
+            if let Some(rp) = region.as_mut() {
+                rp.try_read(&ctx);
+            }
+            if region.as_ref().is_some_and(|rp| rp.fails.dead()) {
+                region = None;
+            }
 
             let on_wall_before = on_wall;
             if let Show::New(slot) = pacer.on_vblank() {
@@ -347,6 +518,7 @@ pub fn run(
                                     size = ?reader.size(),
                                     "sender opened"
                                 );
+                                break_chain(&mut gaps, region.as_mut().map(|rp| &mut rp.ring));
                                 if reader.size() != Some((display.width, display.height)) {
                                     clear(&device, &ctx, &slots);
                                     slot_content.fill(Content::Unknown);
@@ -360,6 +532,7 @@ pub fn run(
                         }
                     }
                     SenderAction::Hold => {
+                        break_chain(&mut gaps, region.as_mut().map(|rp| &mut rp.ring));
                         if reader.open_handle().is_some() {
                             warn!(sender = %cfg.sender.name, "sender lost, holding the last picture");
                             reader.close();
@@ -390,9 +563,14 @@ pub fn run(
                         if let Some(us) = arrived_off_us {
                             arrivals.push(us);
                         }
-                        watch.picture(now_ms());
+                        let at = now_ms();
+                        watch.picture(at);
+                        gaps.picture(MonoMs::since(started), at);
                         if let Some(s) = arrived_slot {
                             slot_content[s] = reader.last_content();
+                            if let Some(rp) = region.as_mut() {
+                                rp.queue(&ctx, &slots[s], now_ms());
+                            }
                         }
                         break;
                     }
@@ -443,6 +621,13 @@ pub fn run(
                     .map(|&(at, us, n)| format!("{}/{us}@{n}", hms_utc(at)))
                     .collect::<Vec<_>>()
                     .join(",");
+                // Each late picture as "<UTC of its arrival>/<ms since the one before>".
+                let (late, late_dropped) = gaps.take_window();
+                let late_txt = late
+                    .iter()
+                    .map(|&(at, gap)| format!("{}/{gap}", hms_utc(at)))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 info!(
                     vblanks = w.vblanks,
                     new = w.new,
@@ -465,9 +650,33 @@ pub fn run(
                     holds = %holds_txt,
                     holds_dropped,
                     slow_shows = %slow_txt,
+                    late_gaps = %late_txt,
+                    late_gaps_dropped = late_dropped,
                     lock_bypassed = reader.take_bypassed(),
                     "window"
                 );
+                if let Some(rp) = region.as_mut() {
+                    let rw = rp.watch.take_window();
+                    // Each run as "<UTC of its first repeated picture>/<pictures in a row>".
+                    let runs_txt = rw
+                        .runs
+                        .iter()
+                        .map(|r| format!("{}/{}", hms_utc(r.start_ms), r.pictures))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    info!(
+                        region = ?rp.region,
+                        pictures = rw.pictures,
+                        repeats = rw.repeats,
+                        runs = %runs_txt,
+                        runs_dropped = rw.runs_dropped,
+                        skipped = rp.skipped,
+                        read_us_max = rp.read_us_max,
+                        "region"
+                    );
+                    rp.skipped = 0;
+                    rp.read_us_max = 0;
+                }
                 holds.clear();
                 holds_dropped = 0;
                 slow_shows.clear();
