@@ -125,6 +125,7 @@ pub const MAX_GAPS: usize = 32;
 /// Gaps of LATE_GAP_MS or more between new pictures: (Unix ms of the late picture, gap ms).
 /// No allocation after `new`.
 pub struct GapWatch {
+    /// Monotonic ms of the previous picture.
     prev_ms: Option<u64>,
     gaps: Vec<(u64, u64)>,
     dropped: u64,
@@ -147,9 +148,8 @@ impl GapWatch {
 
     /// A new picture arrived at monotonic `mono_ms`, Unix `at_ms`.
     pub fn picture(&mut self, mono_ms: u64, at_ms: u64) {
-        let _ = mono_ms;
         if let Some(prev) = self.prev_ms {
-            let gap = at_ms.saturating_sub(prev);
+            let gap = mono_ms.saturating_sub(prev);
             if gap >= LATE_GAP_MS {
                 if self.gaps.len() < MAX_GAPS {
                     self.gaps.push((at_ms, gap));
@@ -158,7 +158,7 @@ impl GapWatch {
                 }
             }
         }
-        self.prev_ms = Some(at_ms);
+        self.prev_ms = Some(mono_ms);
     }
 
     /// The sender went away or re-opened: the next picture starts a new chain.
@@ -199,32 +199,51 @@ impl Default for StageRing {
 
 impl StageRing {
     pub fn new() -> StageRing {
-        todo!()
+        StageRing {
+            pending: [None; STAGES],
+            head: 0,
+            in_flight: 0,
+            break_next: false,
+        }
     }
 
     /// The chain broke: the next queued picture must not be compared with the one before it.
     pub fn mark_break(&mut self) {
-        todo!()
+        self.break_next = true;
     }
 
     /// Stage to copy a new picture (arrived at `at_ms`) into; `None` when every stage is in
     /// flight, which also breaks the chain.
     pub fn queue(&mut self, at_ms: u64) -> Option<usize> {
-        let _ = at_ms;
-        todo!()
+        if self.in_flight == STAGES {
+            self.break_next = true;
+            return None;
+        }
+        let k = (self.head + self.in_flight) % STAGES;
+        self.pending[k] = Some((at_ms, std::mem::take(&mut self.break_next)));
+        self.in_flight += 1;
+        Some(k)
     }
 
     /// The oldest copy in flight: (stage, arrival ms, chain broke before it).
     pub fn oldest(&self) -> Option<(usize, u64, bool)> {
-        todo!()
+        if self.in_flight == 0 {
+            return None;
+        }
+        self.pending[self.head].map(|(at, brk)| (self.head, at, brk))
     }
 
     /// Frees the oldest copy.
     pub fn release(&mut self) {
-        todo!()
+        if self.in_flight == 0 {
+            return;
+        }
+        self.pending[self.head] = None;
+        self.head = (self.head + 1) % STAGES;
+        self.in_flight -= 1;
     }
 
     pub fn in_flight(&self) -> usize {
-        todo!()
+        self.in_flight
     }
 }
