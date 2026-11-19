@@ -13,7 +13,10 @@ use tracing::{debug, error, info, warn};
 use wb_core::config::Config;
 use wb_core::health::{evaluate, Inputs};
 use wb_core::pacing::{Pacer, Show};
-use wb_core::region_watch::{clamp_region, GapWatch, RegionWatch, StageRing, STAGES};
+use wb_core::region_watch::{
+    break_chain, clamp_region, FailAction, FailStreak, GapWatch, MonoMs, RegionWatch, StageRing,
+    MAP_FAIL_LIMIT, STAGES,
+};
 use wb_core::sender::{SenderAction, SenderWatch};
 use wb_core::slow_show::{SlowShowRing, SLOW_SHOW_RING_LEN};
 use wb_core::spout_wire::Content;
@@ -143,10 +146,6 @@ fn clear(device: &ID3D11Device, ctx: &ID3D11DeviceContext, slots: &[ID3D11Textur
     }
 }
 
-/// Map failures in a row (other than "still drawing") after which the region probe turns
-/// itself off.
-const REGION_MAP_FAIL_LIMIT: u32 = 32;
-
 /// Diagnostic copy of one region of each new picture (#24): queued after the picture lands in
 /// its ring slot, read back in order without waiting on a later vblank, compared with the one
 /// before.
@@ -162,10 +161,8 @@ struct RegionProbe {
     /// New pictures not read because every stage was still in flight.
     skipped: u64,
     read_us_max: u64,
-    /// Map failures in a row; the first one is logged.
-    map_fails: u32,
-    /// Set after REGION_MAP_FAIL_LIMIT map failures in a row: the engine drops the probe.
-    dead: bool,
+    /// Map failures in a row; the first one is logged, MAP_FAIL_LIMIT turn the probe off.
+    fails: FailStreak,
 }
 
 impl RegionProbe {
@@ -203,8 +200,7 @@ impl RegionProbe {
             watch: RegionWatch::new(),
             skipped: 0,
             read_us_max: 0,
-            map_fails: 0,
-            dead: false,
+            fails: FailStreak::new(),
         })
     }
 
@@ -231,7 +227,7 @@ impl RegionProbe {
 
     /// Reads every finished copy, oldest first; stops at the first one the GPU still owns.
     fn try_read(&mut self, ctx: &ID3D11DeviceContext) {
-        while !self.dead && self.ring.in_flight() > 0 && self.read_one(ctx) {}
+        while !self.fails.dead() && self.ring.in_flight() > 0 && self.read_one(ctx) {}
     }
 
     /// Reads the oldest copy in flight if the GPU is done with it; never waits. Returns whether
@@ -255,20 +251,22 @@ impl RegionProbe {
             Err(e) if e.code() == DXGI_ERROR_WAS_STILL_DRAWING => return false,
             Err(e) => {
                 // Counted as a skip; only the first failure in a row is logged.
-                if self.map_fails == 0 {
-                    warn!(err = ?e, "region probe map failed");
+                match self.fails.fail() {
+                    FailAction::Log => warn!(err = ?e, "region probe map failed"),
+                    FailAction::Stop => warn!(
+                        err = ?e,
+                        fails = MAP_FAIL_LIMIT,
+                        "region probe off after map failures in a row"
+                    ),
+                    FailAction::Quiet => {}
                 }
-                self.map_fails += 1;
                 self.ring.release();
                 self.skipped += 1;
                 self.watch.reset();
-                if self.map_fails >= REGION_MAP_FAIL_LIMIT {
-                    self.dead = true;
-                }
                 return true;
             }
         }
-        self.map_fails = 0;
+        self.fails.ok();
         let [x0, _, x1, _] = self.region;
         let row = ((x1 - x0) * 4) as usize;
         for (r, chunk) in self.cur.chunks_exact_mut(row).enumerate() {
@@ -463,11 +461,7 @@ pub fn run(
             if let Some(rp) = region.as_mut() {
                 rp.try_read(&ctx);
             }
-            if region.as_ref().is_some_and(|rp| rp.dead) {
-                warn!(
-                    fails = REGION_MAP_FAIL_LIMIT,
-                    "region probe off after map failures in a row"
-                );
+            if region.as_ref().is_some_and(|rp| rp.fails.dead()) {
                 region = None;
             }
 
@@ -524,10 +518,7 @@ pub fn run(
                                     size = ?reader.size(),
                                     "sender opened"
                                 );
-                                gaps.reset();
-                                if let Some(rp) = region.as_mut() {
-                                    rp.ring.mark_break();
-                                }
+                                break_chain(&mut gaps, region.as_mut().map(|rp| &mut rp.ring));
                                 if reader.size() != Some((display.width, display.height)) {
                                     clear(&device, &ctx, &slots);
                                     slot_content.fill(Content::Unknown);
@@ -541,10 +532,7 @@ pub fn run(
                         }
                     }
                     SenderAction::Hold => {
-                        gaps.reset();
-                        if let Some(rp) = region.as_mut() {
-                            rp.ring.mark_break();
-                        }
+                        break_chain(&mut gaps, region.as_mut().map(|rp| &mut rp.ring));
                         if reader.open_handle().is_some() {
                             warn!(sender = %cfg.sender.name, "sender lost, holding the last picture");
                             reader.close();
@@ -577,7 +565,7 @@ pub fn run(
                         }
                         let at = now_ms();
                         watch.picture(at);
-                        gaps.picture(started.elapsed().as_millis() as u64, at);
+                        gaps.picture(MonoMs::since(started), at);
                         if let Some(s) = arrived_slot {
                             slot_content[s] = reader.last_content();
                             if let Some(rp) = region.as_mut() {

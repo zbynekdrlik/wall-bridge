@@ -116,23 +116,26 @@ fn diag_region_is_off_by_default_and_reads_from_toml() {
     assert!(Config::from_toml("[diag]\nbogus = 1\n").is_err());
 }
 
-use wb_core::region_watch::{GapWatch, LATE_GAP_MS, MAX_GAPS};
+use wb_core::region_watch::{GapWatch, MonoMs, LATE_GAP_MS, MAX_GAPS};
 
 #[test]
 fn gaps_under_the_threshold_are_not_logged() {
     let mut g = GapWatch::new();
-    g.picture(1000, 1000);
-    g.picture(1033, 1033);
-    g.picture(1033 + LATE_GAP_MS - 1, 1033 + LATE_GAP_MS - 1);
+    g.picture(MonoMs::from_ms(1000), 1000);
+    g.picture(MonoMs::from_ms(1033), 1033);
+    g.picture(
+        MonoMs::from_ms(1033 + LATE_GAP_MS - 1),
+        1033 + LATE_GAP_MS - 1,
+    );
     assert_eq!(g.take_window(), (vec![], 0));
 }
 
 #[test]
 fn a_late_picture_is_logged_with_its_gap() {
     let mut g = GapWatch::new();
-    g.picture(1000, 1000);
-    g.picture(1050, 1050);
-    g.picture(1067, 1067);
+    g.picture(MonoMs::from_ms(1000), 1000);
+    g.picture(MonoMs::from_ms(1050), 1050);
+    g.picture(MonoMs::from_ms(1067), 1067);
     assert_eq!(g.take_window(), (vec![(1050, 50)], 0));
     assert_eq!(g.take_window(), (vec![], 0));
 }
@@ -140,9 +143,9 @@ fn a_late_picture_is_logged_with_its_gap() {
 #[test]
 fn reset_starts_a_new_chain() {
     let mut g = GapWatch::new();
-    g.picture(1000, 1000);
+    g.picture(MonoMs::from_ms(1000), 1000);
     g.reset();
-    g.picture(5000, 5000);
+    g.picture(MonoMs::from_ms(5000), 5000);
     assert_eq!(g.take_window(), (vec![], 0));
 }
 
@@ -150,7 +153,7 @@ fn reset_starts_a_new_chain() {
 fn gaps_past_the_cap_are_counted() {
     let mut g = GapWatch::new();
     for i in 0..(MAX_GAPS as u64 + 2) {
-        g.picture(i * 100, i * 100);
+        g.picture(MonoMs::from_ms(i * 100), i * 100);
     }
     let (gaps, dropped) = g.take_window();
     assert_eq!(gaps.len(), MAX_GAPS);
@@ -224,10 +227,10 @@ fn a_break_waits_for_the_next_queued_copy() {
 fn late_gaps_use_the_monotonic_clock() {
     let mut g = GapWatch::new();
     // Wall clock jumps forward 10 s between two on-time pictures: no late gap.
-    g.picture(1000, 50_000);
-    g.picture(1033, 60_000);
+    g.picture(MonoMs::from_ms(1000), 50_000);
+    g.picture(MonoMs::from_ms(1033), 60_000);
     // A late picture is logged with its wall-clock time and the monotonic gap.
-    g.picture(1100, 60_067);
+    g.picture(MonoMs::from_ms(1100), 60_067);
     assert_eq!(g.take_window(), (vec![(60_067, 67)], 0));
 }
 
@@ -238,4 +241,84 @@ fn release_on_an_empty_ring_is_a_no_op() {
     assert_eq!((r.in_flight(), r.oldest()), (0, None));
     assert_eq!(r.queue(5), Some(0));
     assert_eq!(r.oldest(), Some((0, 5, false)));
+}
+
+use wb_core::region_watch::{break_chain, FailAction, FailStreak, MAP_FAIL_LIMIT};
+
+#[test]
+fn break_chain_resets_gaps_and_marks_the_ring() {
+    let mut g = GapWatch::new();
+    let mut r = StageRing::new();
+    g.picture(MonoMs::from_ms(1000), 1000);
+    r.queue(1000);
+    break_chain(&mut g, Some(&mut r));
+    // No gap across the break.
+    g.picture(MonoMs::from_ms(9000), 9000);
+    assert_eq!(g.take_window(), (vec![], 0));
+    // The copy queued after the break carries it.
+    r.queue(9000);
+    r.release();
+    assert_eq!(r.oldest(), Some((1, 9000, true)));
+}
+
+#[test]
+fn break_chain_without_a_probe_still_resets_gaps() {
+    let mut g = GapWatch::new();
+    g.picture(MonoMs::from_ms(1000), 1000);
+    break_chain(&mut g, None);
+    g.picture(MonoMs::from_ms(2000), 2000);
+    assert_eq!(g.take_window(), (vec![], 0));
+}
+
+#[test]
+fn fail_streak_logs_the_first_and_stops_at_the_limit() {
+    let mut f = FailStreak::new();
+    assert!(!f.dead());
+    assert_eq!(f.fail(), FailAction::Log);
+    for _ in 1..MAP_FAIL_LIMIT - 1 {
+        assert_eq!(f.fail(), FailAction::Quiet);
+    }
+    assert!(
+        !f.dead(),
+        "{} failures must not stop it",
+        MAP_FAIL_LIMIT - 1
+    );
+    assert_eq!(f.fail(), FailAction::Stop);
+    assert!(f.dead());
+    // Past the limit: no second Stop, the probe is already off.
+    assert_eq!(f.fail(), FailAction::Quiet);
+    assert!(f.dead());
+}
+
+#[test]
+fn fail_streak_ends_on_a_good_read() {
+    let mut f = FailStreak::new();
+    for _ in 0..MAP_FAIL_LIMIT - 1 {
+        f.fail();
+    }
+    f.ok();
+    assert_eq!(
+        f.fail(),
+        FailAction::Log,
+        "first failure after a good read is logged again"
+    );
+    assert!(!f.dead());
+}
+
+#[test]
+fn a_gap_of_exactly_the_threshold_is_logged() {
+    let mut g = GapWatch::new();
+    g.picture(MonoMs::from_ms(1000), 1000);
+    g.picture(MonoMs::from_ms(1000 + LATE_GAP_MS), 7000);
+    assert_eq!(g.take_window(), (vec![(7000, LATE_GAP_MS)], 0));
+}
+
+#[test]
+fn mono_since_reads_the_monotonic_clock() {
+    let start = std::time::Instant::now() - std::time::Duration::from_millis(250);
+    let m = MonoMs::since(start);
+    assert!(
+        m >= MonoMs::from_ms(250) && m < MonoMs::from_ms(60_000),
+        "{m:?}"
+    );
 }

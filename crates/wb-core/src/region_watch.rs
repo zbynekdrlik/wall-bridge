@@ -116,6 +116,23 @@ impl RegionWatch {
     }
 }
 
+/// Monotonic milliseconds on the engine's clock. A type of its own so it cannot be swapped with
+/// a Unix ms timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MonoMs(u64);
+
+impl MonoMs {
+    /// Milliseconds since `start` on the monotonic clock: what the engine passes.
+    pub fn since(start: std::time::Instant) -> MonoMs {
+        MonoMs(start.elapsed().as_millis() as u64)
+    }
+
+    /// A given monotonic reading, for tests and replays of logged timings.
+    pub fn from_ms(ms: u64) -> MonoMs {
+        MonoMs(ms)
+    }
+}
+
 /// A gap this long (ms) or longer between two new Arena pictures is logged (#24): at 30 fps a
 /// picture is due every 33 ms, so 45 ms means one came at least a refresh late.
 pub const LATE_GAP_MS: u64 = 45;
@@ -126,7 +143,7 @@ pub const MAX_GAPS: usize = 32;
 /// No allocation after `new`.
 pub struct GapWatch {
     /// Monotonic ms of the previous picture.
-    prev_ms: Option<u64>,
+    prev_ms: Option<MonoMs>,
     gaps: Vec<(u64, u64)>,
     dropped: u64,
 }
@@ -147,9 +164,9 @@ impl GapWatch {
     }
 
     /// A new picture arrived at monotonic `mono_ms`, Unix `at_ms`.
-    pub fn picture(&mut self, mono_ms: u64, at_ms: u64) {
+    pub fn picture(&mut self, mono_ms: MonoMs, at_ms: u64) {
         if let Some(prev) = self.prev_ms {
-            let gap = mono_ms.saturating_sub(prev);
+            let gap = mono_ms.0.saturating_sub(prev.0);
             if gap >= LATE_GAP_MS {
                 if self.gaps.len() < MAX_GAPS {
                     self.gaps.push((at_ms, gap));
@@ -245,5 +262,63 @@ impl StageRing {
 
     pub fn in_flight(&self) -> usize {
         self.in_flight
+    }
+}
+
+/// The sender re-opened or went away: late gaps start a new chain, and the region probe's next
+/// queued copy is not compared with the one before it.
+pub fn break_chain(gaps: &mut GapWatch, ring: Option<&mut StageRing>) {
+    gaps.reset();
+    if let Some(r) = ring {
+        r.mark_break();
+    }
+}
+
+/// Map failures in a row (other than "still drawing") after which the region probe turns
+/// itself off.
+pub const MAP_FAIL_LIMIT: u32 = 32;
+
+/// What the probe does after a map failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailAction {
+    /// First failure of a streak: log it.
+    Log,
+    /// Further failure: count only.
+    Quiet,
+    /// MAP_FAIL_LIMIT in a row: log once and turn the probe off.
+    Stop,
+}
+
+/// Map failures in a row of the region probe.
+#[derive(Debug, Default)]
+pub struct FailStreak {
+    n: u32,
+}
+
+impl FailStreak {
+    pub fn new() -> FailStreak {
+        FailStreak { n: 0 }
+    }
+
+    /// One more failure, and what to do about it.
+    pub fn fail(&mut self) -> FailAction {
+        self.n = self.n.saturating_add(1);
+        if self.n == MAP_FAIL_LIMIT {
+            FailAction::Stop
+        } else if self.n == 1 {
+            FailAction::Log
+        } else {
+            FailAction::Quiet
+        }
+    }
+
+    /// A read succeeded: the streak ends.
+    pub fn ok(&mut self) {
+        self.n = 0;
+    }
+
+    /// MAP_FAIL_LIMIT failures in a row: the probe should stop.
+    pub fn dead(&self) -> bool {
+        self.n >= MAP_FAIL_LIMIT
     }
 }
