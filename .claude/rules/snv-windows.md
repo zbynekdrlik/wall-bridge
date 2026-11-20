@@ -29,6 +29,7 @@ paths:
 - **MCP Shell:** output over ~70 kB is cut off, so filter on the PC.
   - For files and secrets use `~/.claude/work-products/snv_mcp_shell.py` (talks to the gateway directly; `{ENV:NAME}` placeholders keep secrets off the transcript).
 - **Binaries to SNV:** SNV pulls from a release URL, or from a temporary `python3 -m http.server` on dev1 (10.77.9.195). Never base64 a multi-MB exe through MCP.
+- **Editing an Arena `.avc` (#17, 20.11.):** Arena writes line breaks inside attribute values as raw CR/LF (`JA VERÍM,\r\r\r\r\r\r\r\nZMŔTVYCH…`). Any XML parser normalizes raw CR/LF/TAB in an attribute to spaces, so a parse-and-write tool flattens every multi-line text. Read with `newline=""` and escape them to `&#13;`/`&#10;`/`&#9;` before parsing (`~/.claude/work-products/avc-to-1080p/convert.py`), or patch the raw text. Arena must be closed (Save & Quit) while the file is replaced, or its next save overwrites the patch.
 - **Arena restarts (from songplayer, 30.10.):**
   - Ask the songplayer session (`peer_send`) first about anything Arena / SNV you do not know.
   - SongPlayer's wall guard (`GET :8920/api/v1/wall`, `guard.last`) ends Arena when its BugSplat "Crash Report" window shows, or when Arena hangs 30 s. A teardown crash after Save & Quit is common; the save comes first.
