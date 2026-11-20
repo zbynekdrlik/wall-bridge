@@ -9,6 +9,7 @@ fn sender(connected: bool, age: Option<u64>) -> SenderState {
     SenderState {
         name: "Arena - Screen 2".into(),
         connected,
+        listed: connected,
         width: 7680,
         height: 1080,
         last_picture_age_ms: age,

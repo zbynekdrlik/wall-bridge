@@ -337,6 +337,8 @@ pub fn run(
     info!(adapter = %adapter, "d3d11 device created");
     let mut reader = Reader::new(&device, &cfg.sender.name)?;
     let mut watch = SenderWatch::new(&cfg.sender.name);
+    // Last listed state of a readable sender, to log each change once (#29).
+    let mut was_listed: Option<bool> = None;
     let started = Instant::now();
     // Every present of 8 ms or more, read on /api/status (#22). Kept across re-acquires;
     // `present` restarts at 1 with each acquire.
@@ -502,6 +504,17 @@ pub fn run(
                     break;
                 }
                 let seen = reader.seen();
+                let listed_now = seen.map(|s| s.listed);
+                if listed_now.is_some() && listed_now != was_listed && was_listed.is_some() {
+                    if listed_now == Some(false) {
+                        warn!(sender = %cfg.sender.name, "sender unlisted in SpoutSenderNames, reading it by its mapping");
+                    } else {
+                        info!(sender = %cfg.sender.name, "sender listed again");
+                    }
+                }
+                if listed_now.is_some() {
+                    was_listed = listed_now;
+                }
                 match watch.tick(now_ms(), seen) {
                     SenderAction::Keep => {}
                     SenderAction::Open(h) | SenderAction::Reopen(h) => {

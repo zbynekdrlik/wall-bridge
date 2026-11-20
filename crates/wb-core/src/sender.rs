@@ -21,7 +21,8 @@ pub struct SenderSeen {
     pub handle: u32,
     pub width: u32,
     pub height: u32,
-    /// The name is in the `SpoutSenderNames` list.
+    /// The name is in the `SpoutSenderNames` list. Informational: another process's Spout
+    /// clean-up can drop a live sender's name (SNV 20.11.2026), so the mapping decides.
     pub listed: bool,
 }
 
@@ -43,6 +44,8 @@ pub struct SenderState {
     pub connected: bool,
     pub width: u32,
     pub height: u32,
+    /// The name is in `SpoutSenderNames` (false while connected = read by its mapping only).
+    pub listed: bool,
     /// Time since the last new picture; `None` before the first one.
     pub last_picture_age_ms: Option<u64>,
 }
@@ -51,6 +54,7 @@ pub struct SenderWatch {
     name: String,
     open: Option<u32>,
     connected: bool,
+    listed: bool,
     size: (u32, u32),
     last_picture_ms: Option<u64>,
     /// Start of the current stall clock (last new picture or last stall re-open).
@@ -69,6 +73,7 @@ impl SenderWatch {
             name: name.to_string(),
             open: None,
             connected: false,
+            listed: false,
             size: (0, 0),
             last_picture_ms: None,
             stall_since_ms: None,
@@ -101,11 +106,13 @@ impl SenderWatch {
         self.connected = false;
     }
 
-    /// One check. `seen` is `None` when the sender's mapping cannot be read.
+    /// One check. `seen` is `None` when the sender's mapping cannot be read. A readable
+    /// mapping is a live sender, listed or not.
     pub fn tick(&mut self, now_ms: u64, seen: Option<SenderSeen>) -> SenderAction {
         match seen {
-            Some(s) if s.listed => {
+            Some(s) => {
                 self.connected = true;
+                self.listed = s.listed;
                 self.size = (s.width, s.height);
                 match self.open {
                     None => {
@@ -137,8 +144,9 @@ impl SenderWatch {
                     }
                 }
             }
-            _ => {
+            None => {
                 self.connected = false;
+                self.listed = false;
                 // Forget the handle: whatever comes back is opened fresh.
                 self.open = None;
                 self.forgotten = None;
@@ -151,6 +159,7 @@ impl SenderWatch {
         SenderState {
             name: self.name.clone(),
             connected: self.connected,
+            listed: self.listed,
             width: self.size.0,
             height: self.size.1,
             last_picture_age_ms: self.last_picture_ms.map(|t| now_ms.saturating_sub(t)),

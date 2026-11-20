@@ -33,6 +33,7 @@ fn status() -> Status {
         sender: SenderState {
             name: "Arena - Screen 2".into(),
             connected: true,
+            listed: true,
             width: 7680,
             height: 1080,
             last_picture_age_ms: Some(20),
