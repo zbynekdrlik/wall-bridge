@@ -66,18 +66,58 @@ fn static_scene_is_not_loss() {
     assert_eq!(s.last_picture_age_ms, Some(600_000));
 }
 
+fn unlisted(handle: u32) -> Option<SenderSeen> {
+    Some(SenderSeen {
+        listed: false,
+        ..seen(handle).unwrap()
+    })
+}
+
 #[test]
-fn unlisted_sender_is_missing() {
-    // The 280 B mapping can outlive Arena for a moment; the sender list is the truth.
+fn unlisted_live_sender_keeps_its_texture() {
+    // 20.11.2026: another process's Spout clean-up dropped "Arena - Screen 2" from
+    // SpoutSenderNames while Arena kept sending; holding froze the wall for 4 min.
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.picture(0);
+    assert_eq!(
+        w.tick(0, seen(0x4000_2c42)),
+        SenderAction::Open(0x4000_2c42)
+    );
+    assert_eq!(w.tick(500, unlisted(0x4000_2c42)), SenderAction::Keep);
+    let s = w.state(500);
+    assert!(s.connected);
+    assert!(!s.listed);
+}
+
+#[test]
+fn unlisted_live_sender_is_opened() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    assert_eq!(
+        w.tick(0, unlisted(0x4000_2c42)),
+        SenderAction::Open(0x4000_2c42)
+    );
+    assert!(w.state(0).connected);
+}
+
+#[test]
+fn listed_again_is_reported() {
+    let mut w = SenderWatch::new("Arena - Screen 2");
+    w.tick(0, unlisted(0x4000_2c42));
+    assert!(!w.state(0).listed);
+    assert_eq!(w.tick(500, seen(0x4000_2c42)), SenderAction::Keep);
+    assert!(w.state(500).listed);
+}
+
+#[test]
+fn missing_mapping_holds() {
+    // Arena gone: its 280 B mapping is gone too, listed or not.
     let mut w = SenderWatch::new("Arena - Screen 2");
     w.picture(0);
     w.tick(0, seen(0x4000_2c42));
-    let gone = Some(SenderSeen {
-        listed: false,
-        ..seen(0x4000_2c42).unwrap()
-    });
-    assert_eq!(w.tick(500, gone), SenderAction::Hold);
-    assert!(!w.state(500).connected);
+    assert_eq!(w.tick(500, None), SenderAction::Hold);
+    let s = w.state(500);
+    assert!(!s.connected);
+    assert!(!s.listed);
 }
 
 #[test]
