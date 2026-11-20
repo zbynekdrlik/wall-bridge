@@ -24,6 +24,7 @@ paths:
   - Never answer it for the operator. Cancel with Escape on the dialog.
   - Arena reads its Advanced Output preset at start and does not rewrite it on quit.
 - **Arena's own log:** `C:\Users\Resolume\AppData\Local\Resolume Arena\Resolume Arena log.txt` (local time, UTC+1). It is rewritten at every Arena start, so it holds nothing from before the last launch (no NDI history, 9.11.). Read it with a shared `FileStream`.
+- **Clocks:** wall-bridge logs (`engine.*.log`, `late_gaps`, `slow_shows`) are UTC (`…Z`); the MCP shell's `Get-Date`, file times and the gpu csv are local (UTC+1). Compare with `(Get-Date).ToUniversalTime()`; on 19.11. a local 10:57 was read as 10:57Z and a wait ended an hour early.
 - **GUI clicks in Arena via MCP:** risky, a misclick can start a clip (clips only from the owner's Stream Deck). Prefer file / REST changes.
 - **MCP Shell:** output over ~70 kB is cut off, so filter on the PC.
   - For files and secrets use `~/.claude/work-products/snv_mcp_shell.py` (talks to the gateway directly; `{ENV:NAME}` placeholders keep secrets off the transcript).
