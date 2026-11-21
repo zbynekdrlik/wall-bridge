@@ -109,11 +109,16 @@ fn retry(set: WriteSignal<Option<StatusView>>, attempt: usize) {
     set_timeout(move || connect(set, attempt), reconnect_delay(attempt));
 }
 
+/// Registers the PWA service worker. Browsers expose `navigator.serviceWorker` only in a secure
+/// context (https or localhost); SNV serves the page over plain http by IP, so there it is
+/// skipped (calling it threw "Cannot read properties of undefined", #31).
 fn register_service_worker() {
-    if let Some(w) = web_sys::window() {
-        // The promise is not awaited: without a service worker the page still works.
-        let _ = w.navigator().service_worker().register("/sw.js");
+    let Some(w) = web_sys::window() else { return };
+    if !w.is_secure_context() {
+        return;
     }
+    // The promise is not awaited: without a service worker the page still works.
+    let _ = w.navigator().service_worker().register("/sw.js");
 }
 
 #[wasm_bindgen(start)]
