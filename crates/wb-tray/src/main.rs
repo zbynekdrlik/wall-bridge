@@ -1,4 +1,4 @@
-//! `wall-bridge-tray.exe`: the tray icon next to the engine (airuleset rust-web-tray).
+//! `wall-bridge-tray.exe`: the tray icon next to the engine (airuleset house-stack, Tray).
 //! Status in the tooltip and the first menu line, Open wall-bridge, Copy URL, Exit
 //! (ends the tray only; the engine keeps running).
 #![cfg_attr(windows, windows_subsystem = "windows")]

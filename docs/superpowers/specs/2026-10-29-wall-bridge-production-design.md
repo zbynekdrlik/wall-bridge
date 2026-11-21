@@ -23,7 +23,7 @@ Owner's fear: a repeat of 4 weeks of detours. The working recipe is the bridge +
 3. **The Surround layout is held to a stored definition.** The service detects drift or collapse and restores the layout through NVAPI by itself.
 4. **The wall display stays specialized (off the desktop).** The service owns that state and applies it itself. There is no UIA clicking in Settings.
 5. **House-standard app.**
-   - Tray: airuleset `rules/rust-web-tray.md`, reference iemmixer `crates/iem-tray`.
+   - Tray: airuleset `rules/house-stack.md` (Tray; was `rust-web-tray.md`), reference iemmixer `crates/iem-tray`.
    - Autoupgrade, installer, release channels and self-hosted E2E on the real PC: devbridge pattern.
    - Coverage floor file and version job: fohmixer pattern.
    - A local web dashboard that shows the version.
@@ -151,7 +151,7 @@ A Cargo workspace. Decision logic lives in pure crates that build, test and muta
 
 ### Tray
 
-airuleset `rust-web-tray`: Status (tooltip + menu), Open wall-bridge (dashboard URL), Copy URL, Exit (tray only, the engine keeps running). Autostart at logon. Tauri 2 `tray-icon` + single-instance, as in iemmixer `crates/iem-tray`. Polls `/api/status`.
+airuleset `house-stack` (Tray): Status (tooltip + menu), Open wall-bridge (dashboard URL), Copy URL, Exit (tray only, the engine keeps running). Autostart at logon. Tauri 2 `tray-icon` + single-instance, as in iemmixer `crates/iem-tray`. Polls `/api/status`.
 
 ### Install and autoupgrade (devbridge pattern)
 
