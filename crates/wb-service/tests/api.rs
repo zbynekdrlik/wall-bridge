@@ -281,3 +281,42 @@ async fn ws_connections_are_capped() {
     }
     assert!(ok, "slot not freed");
 }
+
+#[tokio::test]
+async fn ws_answers_a_client_close() {
+    use futures_util::{SinkExt, StreamExt};
+    let app = router(
+        Arc::new(RwLock::new(status())),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/api/ws"))
+        .await
+        .unwrap();
+    ws.next().await.unwrap().unwrap();
+    // The browser closes a silent socket and waits for the server's Close before it fires
+    // onclose (and reconnects); the server must answer it.
+    ws.send(tokio_tungstenite::tungstenite::Message::Close(None))
+        .await
+        .unwrap();
+    let answered = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while let Some(m) = ws.next().await {
+            match m {
+                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) | Err(_) => return true,
+                Ok(_) => continue,
+            }
+        }
+        true
+    })
+    .await;
+    assert_eq!(answered, Ok(true), "no Close from the server within 3 s");
+}
