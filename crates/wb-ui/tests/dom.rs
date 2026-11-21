@@ -20,7 +20,7 @@ async fn shows_down_then_the_status() {
     // Leptos runs its render effects on the async executor; without one they never run.
     let _ = any_spawner::Executor::init_wasm_bindgen();
     let (status, set_status) = signal(None);
-    let _handle = mount_to_body(move || view! { <Dashboard status=status/> });
+    mount_to_body(move || view! { <Dashboard status=status/> });
     leptos::task::tick().await;
     assert_eq!(text("state"), DOWN_TEXT);
     assert!(text("version").starts_with('v'));

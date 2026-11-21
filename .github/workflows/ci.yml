@@ -36,6 +36,8 @@ jobs:
       - run: rustup target add wasm32-unknown-unknown
       - uses: taiki-e/install-action@v2
         with: { tool: "trunk@0.22.2,wasm-bindgen-cli@0.2.117" }
+      - name: Clippy (wasm32)
+        run: cargo clippy -p wb-ui --all-targets --target wasm32-unknown-unknown -- -D warnings
       - name: Dashboard build (Trunk)
         working-directory: crates/wb-ui
         run: trunk build --release
