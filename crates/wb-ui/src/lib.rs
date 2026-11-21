@@ -3,6 +3,8 @@
 //! `wb_core::dashboard`, so the text is tested on Linux.
 
 use leptos::prelude::*;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use wb_core::dashboard::{headline, rows, StatusView};
@@ -69,6 +71,30 @@ fn ws_url() -> Option<String> {
     Some(format!("{scheme}://{}/api/ws", loc.host().ok()?))
 }
 
+/// A socket that sent nothing for this long is closed and reconnected (the server pushes every
+/// second; a dead network fires no close for minutes, and the page must not keep showing a
+/// stale "Stena OK").
+pub const STALE_MS: f64 = 3500.0;
+
+/// No message for [`STALE_MS`] or longer.
+pub fn is_stale(now_ms: f64, last_ms: f64) -> bool {
+    now_ms - last_ms >= STALE_MS
+}
+
+fn now_ms() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(0.0)
+}
+
+/// The callbacks and watchdog of one socket, dropped when it closes (no leak per reconnect).
+struct Conn {
+    _on_msg: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_open: Closure<dyn FnMut()>,
+    watchdog: Option<IntervalHandle>,
+}
+
 /// Opens the status socket; on close, clears the status and reconnects with back-off.
 fn connect(set: WriteSignal<Option<StatusView>>, attempt: usize) {
     let Some(url) = ws_url() else { return };
@@ -79,30 +105,58 @@ fn connect(set: WriteSignal<Option<StatusView>>, attempt: usize) {
             return;
         }
     };
-    let on_msg =
+    let last = Rc::new(Cell::new(now_ms()));
+    let opened = Rc::new(Cell::new(false));
+    let on_msg = {
+        let last = last.clone();
         Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+            last.set(now_ms());
             if let Some(text) = e.data().as_string() {
                 if let Some(s) = parse(&text) {
                     set.set(Some(s));
                 }
             }
-        });
+        })
+    };
     ws.set_onmessage(Some(on_msg.as_ref().unchecked_ref()));
-    on_msg.forget();
-    let opened = std::rc::Rc::new(std::cell::Cell::new(false));
     let on_open = {
-        let opened = opened.clone();
-        Closure::<dyn FnMut()>::new(move || opened.set(true))
+        let (last, opened) = (last.clone(), opened.clone());
+        Closure::<dyn FnMut()>::new(move || {
+            opened.set(true);
+            last.set(now_ms());
+        })
     };
     ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
-    on_open.forget();
-    let on_close =
-        Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |_e: web_sys::CloseEvent| {
-            set.set(None);
-            retry(set, next_attempt(opened.get(), attempt));
-        });
-    ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
-    on_close.forget();
+    let watchdog = {
+        let ws = ws.clone();
+        set_interval_with_handle(
+            move || {
+                if is_stale(now_ms(), last.get()) {
+                    // Show it at once: on a dead link the close handshake (and onclose, which
+                    // reconnects) can take long.
+                    set.set(None);
+                    let _ = ws.close();
+                }
+            },
+            Duration::from_millis(1000),
+        )
+        .ok()
+    };
+    let conn = Rc::new(RefCell::new(Some(Conn {
+        _on_msg: on_msg,
+        _on_open: on_open,
+        watchdog,
+    })));
+    let on_close = Closure::once_into_js(move |_e: web_sys::CloseEvent| {
+        if let Some(c) = conn.borrow_mut().take() {
+            if let Some(h) = c.watchdog {
+                h.clear();
+            }
+        }
+        set.set(None);
+        retry(set, next_attempt(opened.get(), attempt));
+    });
+    ws.set_onclose(Some(on_close.unchecked_ref()));
 }
 
 fn retry(set: WriteSignal<Option<StatusView>>, attempt: usize) {

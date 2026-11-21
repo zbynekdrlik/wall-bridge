@@ -9,6 +9,7 @@ pub mod slow_show;
 pub mod spout_lock;
 pub mod spout_wire;
 pub mod status;
+pub mod text_cache;
 pub mod timefmt;
 pub mod topology;
 pub mod vblank;

@@ -122,8 +122,12 @@ $ws = New-Object System.Net.WebSockets.ClientWebSocket
 $cts = New-Object System.Threading.CancellationTokenSource 5000
 $ws.ConnectAsync([Uri]'ws://127.0.0.1:8930/api/ws', $cts.Token).Wait()
 $buf = New-Object byte[] 65536
-$got = $ws.ReceiveAsync([ArraySegment[byte]]::new($buf), $cts.Token).Result
-$msg = [Text.Encoding]::UTF8.GetString($buf, 0, $got.Count) | ConvertFrom-Json
+$frame = New-Object System.IO.MemoryStream
+do {
+    $got = $ws.ReceiveAsync([ArraySegment[byte]]::new($buf), $cts.Token).Result
+    $frame.Write($buf, 0, $got.Count)
+} until ($got.EndOfMessage)
+$msg = [Text.Encoding]::UTF8.GetString($frame.ToArray()) | ConvertFrom-Json
 $ws.Dispose()
 if ($msg.version -ne $version) { throw "/api/ws sent version $($msg.version), expected $version" }
 Step "dashboard: wb-ui $wasm built for $version, /api/ws live ($($msg.state))"
