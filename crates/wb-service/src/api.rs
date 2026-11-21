@@ -99,7 +99,22 @@ async fn push_status(mut socket: WebSocket, s: ApiState, peer: SocketAddr) {
     let mut tick = tokio::time::interval(WS_PUSH);
     let mut sent: u64 = 0;
     loop {
-        tick.tick().await;
+        tokio::select! {
+            _ = tick.tick() => {}
+            // Reading also answers the client's Close (tungstenite replies to it), so the
+            // browser's onclose fires and it can reconnect.
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Close(_))) | None => {
+                    info!(%peer, sent, "dashboard socket closed by the client");
+                    return;
+                }
+                Some(Err(e)) => {
+                    info!(%peer, sent, err = ?e, "dashboard socket error");
+                    return;
+                }
+                Some(Ok(_)) => continue,
+            },
+        }
         let msg = Message::Text(status_text(&s).as_ref().into());
         match tokio::time::timeout(WS_SEND_TIMEOUT, socket.send(msg)).await {
             Ok(Ok(())) => {}

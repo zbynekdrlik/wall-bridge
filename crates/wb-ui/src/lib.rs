@@ -127,32 +127,39 @@ fn connect(set: WriteSignal<Option<StatusView>>, attempt: usize) {
         })
     };
     ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
+    let conn: Rc<RefCell<Option<Conn>>> = Rc::new(RefCell::new(None));
+    let drop_conn = |conn: &Rc<RefCell<Option<Conn>>>| {
+        if let Some(c) = conn.borrow_mut().take() {
+            if let Some(h) = c.watchdog {
+                h.clear();
+            }
+        }
+    };
     let watchdog = {
-        let ws = ws.clone();
+        let (ws, conn, opened) = (ws.clone(), conn.clone(), opened.clone());
         set_interval_with_handle(
             move || {
                 if is_stale(now_ms(), last.get()) {
-                    // Show it at once: on a dead link the close handshake (and onclose, which
-                    // reconnects) can take long.
+                    // A dead link may never fire onclose: show it, drop this socket and
+                    // reconnect now.
                     set.set(None);
+                    ws.set_onclose(None);
                     let _ = ws.close();
+                    drop_conn(&conn);
+                    retry(set, next_attempt(opened.get(), attempt));
                 }
             },
             Duration::from_millis(1000),
         )
         .ok()
     };
-    let conn = Rc::new(RefCell::new(Some(Conn {
+    *conn.borrow_mut() = Some(Conn {
         _on_msg: on_msg,
         _on_open: on_open,
         watchdog,
-    })));
+    });
     let on_close = Closure::once_into_js(move |_e: web_sys::CloseEvent| {
-        if let Some(c) = conn.borrow_mut().take() {
-            if let Some(h) = c.watchdog {
-                h.clear();
-            }
-        }
+        drop_conn(&conn);
         set.set(None);
         retry(set, next_attempt(opened.get(), attempt));
     });
