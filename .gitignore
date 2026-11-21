@@ -8,3 +8,4 @@ e2e/playwright-report/
 .playwright-mcp/
 mutants.out/
 mutants.out.old/
+crates/wb-ui/dist/

@@ -17,15 +17,20 @@ test("dashboard shows the version and the live status", async ({ page }) => {
     if (r.status() >= 400) bad.push(`${r.status()} ${r.url()}`);
   });
 
+  const sockets: string[] = [];
+  page.on("websocket", (ws) => sockets.push(ws.url()));
+
   await page.goto("/");
   await expect(page.locator("#version")).toHaveText(`v${version}`);
   await expect(page.locator("#state")).toHaveText(process.env.WB_EXPECT_STATE ?? "Stena OK");
   await expect(page.locator("#rows")).toContainText("7680×1080 @ 59.978 Hz");
   await expect(page.locator("#rows")).toContainText("Arena - Screen 2 — pripojený");
 
-  // The page polls /api/status every 2 s: the table must still be filled after a refresh.
+  // Live state comes over the /api/ws WebSocket (pushed every second, #31): the table must
+  // still be filled after a few pushes.
   await page.waitForTimeout(2500);
   await expect(page.locator("#rows")).toContainText("Zmeškané vblanky (10 s)");
+  expect(sockets.some((u) => u.endsWith("/api/ws"))).toBe(true);
 
   // Headless Chromium does not fetch /favicon.ico; a headed browser does and logs a 404 when
   // the page declares no icon.

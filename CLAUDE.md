@@ -17,6 +17,7 @@ It started as an MVP inside songplayer (zbynekdrlik/songplayer#259, 29.10.2026).
   - `wb-topology`: NVAPI Mosaic.
   - `wb-service`: `wall-bridge.exe`, the engine, keeper and API.
   - `wb-tray`: `wall-bridge-tray.exe`.
+  - `wb-ui`: the dashboard, Leptos 0.8 CSR built to WASM by Trunk (house stack, #31). wb-service embeds its `dist/` (rust-embed), so build it first: `cd crates/wb-ui && trunk build --release` (system trunk + wasm32 target on dev1). Live state over `GET /api/ws`; the text comes from `wb_core::dashboard`.
 - Local cross-build on dev1: `cargo build --release --target x86_64-pc-windows-gnu --workspace`. The target and mingw are system-wide; do not install toolchains in the account.
 - Local checks before a push: `cargo fmt --all --check`, `cargo clippy -p wb-core -p wb-service -p wb-tray -p wb-topology --all-targets -- -D warnings`, the same clippy with `--target x86_64-pc-windows-gnu`, `cargo test -p wb-core -p wb-service -p wb-tray -p wb-topology`.
 - CI (`.github/workflows/ci.yml`) is the merge gate:
