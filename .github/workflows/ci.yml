@@ -162,6 +162,8 @@ jobs:
           sleep 2
           npx playwright test
           WB_URL=http://127.0.0.1:18931 WB_EXPECT_STATE="Stena beží, ale niečo nesedí — sender_lost" npx playwright test
+          # Opened by IP over plain http, as on SNV: an insecure context (no service worker API).
+          WB_URL="http://$(hostname -I | awk '{print $1}'):18930" npx playwright test
 
   installer-tests:
     runs-on: windows-latest
