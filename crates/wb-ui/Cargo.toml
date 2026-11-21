@@ -18,3 +18,4 @@ web-sys = { version = "0.3", features = ["Window", "Location", "WebSocket", "Mes
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+any_spawner = { version = "0.3", features = ["wasm-bindgen"] }

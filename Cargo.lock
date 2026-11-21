@@ -3729,6 +3729,7 @@ dependencies = [
 name = "wb-ui"
 version = "0.2.24"
 dependencies = [
+ "any_spawner",
  "console_error_panic_hook",
  "leptos",
  "serde_json",
