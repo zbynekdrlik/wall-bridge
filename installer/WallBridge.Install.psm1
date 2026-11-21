@@ -104,7 +104,7 @@ if (-not (Get-Process -Name 'wall-bridge' -ErrorAction SilentlyContinue)) {
         -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 }
 
-# The tray icon starts at the desktop user's logon (airuleset rust-web-tray). No restart
+# The tray icon starts at the desktop user's logon (airuleset house-stack, Tray). No restart
 # policy: Exit in its menu is a deliberate choice.
 function Register-TrayTask([string]$Exe, [string]$User) {
     $action = New-ScheduledTaskAction -Execute $Exe -WorkingDirectory (Split-Path $Exe)

@@ -106,8 +106,29 @@ if (-not $promoted -or -not $promoted.PSObject.Properties['IsPromoted'] -or $pro
 }
 Step "tray pid $($tray[0].Id), icon promoted"
 
-# 6. The dashboard serves this version.
+# 6. The dashboard is this version's Leptos app (#31) and gets live state over /api/ws.
+# The DOM itself (version, state, rows, clean console) is read by Playwright: CI dashboard-e2e
+# on the same build, and a post-deploy read of the live page from dev1.
 $html = (Invoke-WebRequest 'http://127.0.0.1:8930/' -UseBasicParsing -TimeoutSec 5).Content
-if ($html -notmatch [regex]::Escape("v$version")) { throw "dashboard does not show v$version" }
-Step "dashboard shows v$version"
+$wasm = [regex]::Match($html, '/wb-ui-[0-9a-f]+_bg\.wasm').Value
+if (-not $wasm) { throw "dashboard page has no wb-ui wasm" }
+$r = Invoke-WebRequest "http://127.0.0.1:8930$wasm" -UseBasicParsing -TimeoutSec 10
+if ($r.Headers['Content-Type'] -ne 'application/wasm') { throw "$wasm served as $($r.Headers['Content-Type'])" }
+$bytes = $r.Content
+if ($bytes -is [string]) { $bytes = [Text.Encoding]::UTF8.GetBytes($bytes) }
+$text = [Text.Encoding]::ASCII.GetString($bytes)
+if (-not $text.Contains($version)) { throw "dashboard wasm $wasm was not built for $version" }
+$ws = New-Object System.Net.WebSockets.ClientWebSocket
+$cts = New-Object System.Threading.CancellationTokenSource 5000
+$ws.ConnectAsync([Uri]'ws://127.0.0.1:8930/api/ws', $cts.Token).Wait()
+$buf = New-Object byte[] 65536
+$frame = New-Object System.IO.MemoryStream
+do {
+    $got = $ws.ReceiveAsync([ArraySegment[byte]]::new($buf), $cts.Token).Result
+    $frame.Write($buf, 0, $got.Count)
+} until ($got.EndOfMessage)
+$msg = [Text.Encoding]::UTF8.GetString($frame.ToArray()) | ConvertFrom-Json
+$ws.Dispose()
+if ($msg.version -ne $version) { throw "/api/ws sent version $($msg.version), expected $version" }
+Step "dashboard: wb-ui $wasm built for $version, /api/ws live ($($msg.state))"
 Step 'SNV E2E passed'

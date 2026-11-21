@@ -1,5 +1,5 @@
 //! Serves the real dashboard and status API with a fixed status, for the Playwright test
-//! (`e2e/`). Usage: `cargo run -p wb-service --example dashboard_fixture -- <port> <state>`.
+//! (`e2e/`; listens on all interfaces so the page can also be opened by IP, an insecure context like SNV). Usage: `cargo run -p wb-service --example dashboard_fixture -- <port> <state>`.
 
 use std::sync::{Arc, RwLock};
 use wb_core::health::{Reason, State};
@@ -55,7 +55,7 @@ async fn main() {
         Arc::new(RwLock::new(status)),
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
     );
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
         .expect("bind");
     println!("listening on {port}");

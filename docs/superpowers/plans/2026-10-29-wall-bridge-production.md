@@ -232,7 +232,7 @@
 - Create: `installer/nsis/` (or Tauri NSIS bundle as in devbridge `crates/devbridge-app/tauri.conf.json`), `installer/autoupdate.ps1`, `installer/tests/autoupdate.Tests.ps1`.
 
 **Interfaces:**
-- Tray menu (airuleset `rust-web-tray`):
+- Tray menu (airuleset `house-stack` (Tray)):
   - Status (tooltip + first item: `Stena: OK` / `Stena: problém – <reason>`)
   - `Otvoriť wall-bridge` → `http://10.77.9.201:8930/`
   - `Kopírovať URL`

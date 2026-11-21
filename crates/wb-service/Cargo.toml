@@ -9,7 +9,9 @@ path = "src/main.rs"
 
 [dependencies]
 wb-core = { path = "../wb-core" }
-axum = "0.7"
+axum = { version = "0.8", features = ["ws"] }
+# The Leptos dashboard (crates/wb-ui, built by Trunk) is embedded in the exe (#31).
+rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
 serde_json = "1"
 tracing = "0.1"
@@ -36,3 +38,5 @@ windows = { version = "0.58", features = [
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+tokio-tungstenite = "0.28"
+futures-util = "0.3"

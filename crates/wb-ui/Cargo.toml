@@ -1,0 +1,21 @@
+[package]
+name = "wb-ui"
+version.workspace = true
+edition.workspace = true
+description = "wall-bridge dashboard: Leptos CSR, built to WASM by Trunk, embedded in wall-bridge.exe (#31)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wb-core = { path = "../wb-core" }
+leptos = { version = "0.8", features = ["csr"] }
+serde_json = "1"
+# Pinned to the wasm-bindgen CLI / test runner on the build hosts (dev1, CI): the two must match.
+wasm-bindgen = "=0.2.117"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = ["Window", "Location", "WebSocket", "MessageEvent", "CloseEvent", "Navigator", "ServiceWorkerContainer", "Performance"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+any_spawner = { version = "0.3", features = ["wasm-bindgen"] }

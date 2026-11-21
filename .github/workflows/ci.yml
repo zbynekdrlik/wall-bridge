@@ -13,7 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Pure crates build and test on Linux; Windows-only crates are checked in the windows job.
-  PURE_CRATES: -p wb-core -p wb-service -p wb-tray -p wb-topology
+  PURE_CRATES: -p wb-core -p wb-service -p wb-tray -p wb-topology -p wb-ui
   # Coverage floor applies to the pure logic crate; wb-service is mostly Windows glue.
   COVERAGE_CRATES: -p wb-core
 
@@ -25,19 +25,51 @@ jobs:
       - uses: actions/checkout@v4
       - run: cargo fmt --all --check
 
+  # The Leptos dashboard (#31): built once to WASM by Trunk; every job that compiles wb-service
+  # downloads the dist (rust-embed fails the build without it).
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with: { tool: "trunk@0.22.2,wasm-bindgen-cli@0.2.117" }
+      - name: Clippy (wasm32)
+        run: cargo clippy -p wb-ui --all-targets --target wasm32-unknown-unknown -- -D warnings
+      - name: Dashboard build (Trunk)
+        working-directory: crates/wb-ui
+        run: trunk build --release
+      - name: Component test in headless Chrome (wasm-bindgen-test)
+        run: |
+          export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
+          export CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
+          cargo test -p wb-ui --target wasm32-unknown-unknown --test dom
+      - uses: actions/upload-artifact@v4
+        with: { name: wb-ui-dist, path: crates/wb-ui/dist }
+
   clippy-linux:
+    needs: [ui]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Dashboard dist (from the ui job; wb-service embeds it)
+        uses: actions/download-artifact@v4
+        with: { name: wb-ui-dist, path: crates/wb-ui/dist }
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy $PURE_CRATES --all-targets -- -D warnings
 
   test-linux:
+    needs: [ui]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Dashboard dist (from the ui job; wb-service embeds it)
+        uses: actions/download-artifact@v4
+        with: { name: wb-ui-dist, path: crates/wb-ui/dist }
       - uses: Swatinem/rust-cache@v2
       - run: cargo test $PURE_CRATES
       - name: ndi-watch gap logic
@@ -82,10 +114,14 @@ jobs:
         run: python3 scripts/check_version.py --base-ref origin/main
 
   windows-build:
+    needs: [ui]
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Dashboard dist (from the ui job; wb-service embeds it)
+        uses: actions/download-artifact@v4
+        with: { name: wb-ui-dist, path: crates/wb-ui/dist }
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -104,10 +140,14 @@ jobs:
           path: target/release/*.exe
 
   dashboard-e2e:
+    needs: [ui]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Dashboard dist (from the ui job; wb-service embeds it)
+        uses: actions/download-artifact@v4
+        with: { name: wb-ui-dist, path: crates/wb-ui/dist }
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
@@ -122,6 +162,8 @@ jobs:
           sleep 2
           npx playwright test
           WB_URL=http://127.0.0.1:18931 WB_EXPECT_STATE="Stena beží, ale niečo nesedí — sender_lost" npx playwright test
+          # Opened by IP over plain http, as on SNV: an insecure context (no service worker API).
+          WB_URL="http://$(hostname -I | awk '{print $1}'):18930" npx playwright test
 
   installer-tests:
     runs-on: windows-latest
@@ -138,7 +180,7 @@ jobs:
 
   all-pass:
     if: always()
-    needs: [fmt, clippy-linux, test-linux, coverage, mutants, version, windows-build, installer-tests, dashboard-e2e]
+    needs: [fmt, ui, clippy-linux, test-linux, coverage, mutants, version, windows-build, installer-tests, dashboard-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Every job green
@@ -154,6 +196,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Dashboard dist (from the ui job; wb-service embeds it)
+        uses: actions/download-artifact@v4
+        with: { name: wb-ui-dist, path: crates/wb-ui/dist }
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p wb-service -p wb-tray
       - name: Bundle (wall-bridge.exe + installer + VERSION + SHA256SUMS)
