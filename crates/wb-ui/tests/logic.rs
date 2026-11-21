@@ -35,3 +35,11 @@ fn version_and_down_text() {
     assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
     assert_eq!(DOWN_TEXT, "Služba neodpovedá");
 }
+
+#[test]
+fn a_socket_without_messages_goes_stale() {
+    use wb_ui::{is_stale, STALE_MS};
+    assert_eq!(STALE_MS, 3500.0);
+    assert!(!is_stale(10_000.0, 10_000.0 - 3499.0));
+    assert!(is_stale(10_000.0, 10_000.0 - 3500.0));
+}

@@ -223,3 +223,61 @@ async fn stop_without_the_header_is_refused() {
         (StatusCode::FORBIDDEN, false)
     );
 }
+
+#[tokio::test]
+async fn only_hashed_assets_are_cached_forever() {
+    let (_, _, body) = get_typed("/").await;
+    let html = String::from_utf8(body).unwrap();
+    let end = html.find("_bg.wasm").unwrap() + "_bg.wasm".len();
+    let wasm = &html[html[..end].rfind('/').unwrap()..end];
+    let cache = |path: String| async move {
+        let app = router(
+            Arc::new(RwLock::new(status())),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let res = app
+            .oneshot(Request::get(path.as_str()).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        res.headers()["cache-control"].to_str().unwrap().to_string()
+    };
+    assert!(cache(wasm.to_string()).await.contains("immutable"));
+    for p in ["/", "/sw.js", "/manifest.webmanifest", "/icon.svg"] {
+        assert_eq!(cache(p.to_string()).await, "no-cache", "{p}");
+    }
+}
+
+#[tokio::test]
+async fn ws_connections_are_capped() {
+    let app = router(
+        Arc::new(RwLock::new(status())),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let url = format!("ws://127.0.0.1:{port}/api/ws");
+    let mut open = vec![];
+    for _ in 0..wb_service::api::MAX_SOCKETS {
+        open.push(tokio_tungstenite::connect_async(&url).await.unwrap());
+    }
+    assert!(tokio_tungstenite::connect_async(&url).await.is_err());
+    drop(open.pop());
+    // The freed slot is usable again once the server notices the close.
+    let mut ok = false;
+    for _ in 0..30 {
+        if tokio_tungstenite::connect_async(&url).await.is_ok() {
+            ok = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(ok, "slot not freed");
+}
